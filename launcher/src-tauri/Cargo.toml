@@ -1,6 +1,6 @@
 [package]
 name = "dz-launcher"
-version = "0.4.1"
+version = "0.5.0"
 description = "DisasterZone Launcher: installs and updates the DisasterZone addon"
 authors = ["tsumilo"]
 license = "MIT"
@@ -37,6 +37,16 @@ thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["fs", "rt", "macros", "time", "sync"] }
 walkdir = "2.5.0"
 
+# (dev builds: the hashing and unzipping crates optimised, or a check of a few hundred MB takes many seconds)
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.flate2]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
 [profile.release]
 opt-level = "s"
 lto = true
@@ -48,6 +58,7 @@ tauri-build = { version = "2.7.2", features = [] }
 
 [target."cfg(windows)".dependencies]
 winreg = "0.56.0"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
