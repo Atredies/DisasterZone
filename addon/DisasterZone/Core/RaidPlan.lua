@@ -1671,6 +1671,21 @@ function RaidPlan:GetRaid(occId)
     return ResolveOcc(Root(false), occId)
 end
 
+-- When a raid is over: sign-ups close SIGNUP_CLOSE after its start; it is shown as past and left out of upcoming lists.
+-- The one definition for the core and the UI (the UI repeated 6 * 3600 thirteen times). Read through
+-- RaidPlan.SIGNUP_CLOSE, so a change (or a test) moves every check at once.
+RaidPlan.SIGNUP_CLOSE = SIGNUP_CLOSE
+
+-- The start time before which a raid is over, at `now` (default: the server time).
+function RaidPlan:OverCutoff(now)
+    return (now or Now()) - RaidPlan.SIGNUP_CLOSE
+end
+
+-- Is raid view `v` over (no more answers, shown as past)?
+function RaidPlan:IsOver(v, now)
+    return v.t < RaidPlan:OverCutoff(now)
+end
+
 -- The members a locked raid takes sign-ups from { [key] = true }; nil when it is open to everyone (not locked, or
 -- locked without any team or invite).
 local function LockSet(v)
@@ -2463,7 +2478,7 @@ function RaidPlan:IsRaidInviteFrom(from)
     local me = Util.PlayerKey()
     if not me or type(from) ~= "string" or Util.IsMe(from) then return false end
     local now = Now()
-    for _, v in ipairs(self:GetRaids(now - SIGNUP_CLOSE, now + 2 * 3600)) do
+    for _, v in ipairs(self:GetRaids(self:OverCutoff(now), now + 2 * 3600)) do
         if not v.cancelled and (self:CanEditGroups(v, from) or self:CanManageRaid(v, from)) then
             local mine = self:GetMySignup(v.id)
             local grp = self:GetLayout(v)
@@ -2535,7 +2550,7 @@ function RaidPlan:SetRaidHidden(occId, on, scope)
             if not s or s.x then set[key] = nil end
         else
             local r = self:GetRaid(key)
-            if not r or r.t < now - SIGNUP_CLOSE then set[key] = nil end
+            if not r or self:IsOver(r, now) then set[key] = nil end
         end
     end
     if not next(set) then ns.db.raidplanHidden = nil end
@@ -3866,7 +3881,7 @@ function RaidPlan:SignUpFor(occId, key, status, spec, note)
     local v = ResolveOcc(root, occId)
     if not v then return false, "unknown raid" end
     if v.cancelled then return false, "This raid was cancelled." end
-    if v.t < Now() - SIGNUP_CLOSE then return false, "This raid is over." end
+    if RaidPlan:IsOver(v) then return false, "This raid is over." end
     if not STATUSES[status] then return false, "invalid status" end
     local block = self:GetSignupBlock(v, key)
     if block == "blacklist" then return false, "You can't sign up for raids. Contact an officer."
@@ -3912,7 +3927,7 @@ function RaidPlan:SignUp(occId, status, spec, note, charKey)
     local v = ResolveOcc(root, occId)
     if not v then return false, "unknown raid" end
     if v.cancelled then return false, "This raid was cancelled." end
-    if v.t < Now() - SIGNUP_CLOSE then return false, "This raid is over." end
+    if RaidPlan:IsOver(v) then return false, "This raid is over." end
     if not STATUSES[status] then return false, "invalid status" end
     local block = self:GetSignupBlock(v, me)
     if block == "blacklist" then
@@ -4017,10 +4032,10 @@ local function InUse(root, kind, rec, now)
     if kind == "T" then return true end
     if kind == "S" then
         if rec.x then return rec.rev >= now - TOMBSTONE_DAYS end
-        return not (rec.u and SeriesTime(rec, rec.u) < now - SIGNUP_CLOSE)
+        return not (rec.u and SeriesTime(rec, rec.u) < RaidPlan:OverCutoff(now))
     end
     local t = OccTime(root, rec.id)
-    if t then return t >= now - SIGNUP_CLOSE end
+    if t then return t >= RaidPlan:OverCutoff(now) end
     return rec.rev >= now - TOMBSTONE_DAYS
 end
 
