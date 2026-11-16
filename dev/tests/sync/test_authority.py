@@ -5,6 +5,8 @@ every other client refusing it.
      attendance, Discord or recruitment rules; a GMR is taken only from the Guild Master (rank 0) as its sender.
   2. Reserves: a raid assistant's RVS no longer replaces the raid's soft-reserve list (only the authority, or whoever
      holds the list I have).
+  3. Raid plans: a raid record passed on (RPG) by a plain member, "by" a raid leader, no longer shows on a client that
+     never had it; a raid planner's copy does.
 
 Run: luaenv\\Scripts\\python.exe tests\\sync\\test_authority.py [-k name]   (from dev)
 """
@@ -97,6 +99,36 @@ def a_member_who_missed_the_gm_gets_the_rules_from_the_gm_only():
     gm.login()
     w.tick(60)
     assert nala.eval_py("return ns.Guild:GetAttendanceRules()") == {"o": 7, "d": 9}
+    no_errors(w)
+
+
+# ------------------------------------------------------------------------------------------------------------------
+# 3. Raid plans: a relayed record new to me
+# ------------------------------------------------------------------------------------------------------------------
+@case
+def a_relayed_raid_by_a_raid_leader_is_not_taken_from_a_plain_member():
+    from rp_common import world as rp_world, create, now, DAY, K  # noqa: E402
+    w, c = rp_world()
+    bob, lee, sam = c["Bob"], c["Lee"], c["Sam"]           # Bob: council + raid leader; Lee, Sam: members
+    occ = create(bob, i="kara", t=now(bob) + DAY, no="the real note")
+    w.tick(3)
+
+    def stored(cl):
+        return cl.eval_py("local o = ...; local r = ns.db.raidplan and ns.db.raidplan[ns.Guild:GetGuildKey()]; "
+                          "return r and r.E[o]", occ)
+
+    assert stored(sam)["no"] == "the real note"
+    # Lee loses the raid (a fresh install); Sam passes on a made-up newer version "by" Bob
+    lee.eval("local r = ns.db.raidplan[ns.Guild:GetGuildKey()]; r.E[...] = nil; r.OK = {}", occ)
+    sam.eval("local o, to = ...; local r = ns.db.raidplan[ns.Guild:GetGuildKey()]; local e = {}; "
+             "for k, v in pairs(r.E[o]) do e[k] = v end; e.no = 'forged'; e.rev = e.rev + 1; "
+             "ns.Comm:Send({ t = 'RPG', o = o, e = e }, 'WHISPER', to, 'data')", occ, K("Lee"))
+    w.tick(1)
+    assert stored(lee) is None, stored(lee)
+    # Lee asks a raid planner (Bob) and takes Bob's copy
+    w.tick(6)
+    s = stored(lee)
+    assert s and s["no"] == "the real note", s
     no_errors(w)
 
 

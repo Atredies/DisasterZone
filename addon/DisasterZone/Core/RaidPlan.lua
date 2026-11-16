@@ -39,8 +39,8 @@ if DisasterZoneBoot and DisasterZoneBoot.Run("Core/RaidPlan.lua", ...) then retu
 -- asks for the items that differ (RPW) and sends its own copy of them; items travel one per message (RPG).
 -- Records merge by rev (then by hash), so both sides converge. A version whose writer may not write it (see Trusted)
 -- never replaces one that shows, and only who names leaders changes a stored raid's leader: a hand-made message
--- can't delete, change or take over a raid on a client that holds it. (A copy passed on by someone else, RPG, can't
--- prove who wrote it: a client that never had the record takes it at its word.)
+-- can't delete, change or take over a raid on a client that holds it. A copy passed on by someone else (RPG) can't
+-- prove who wrote it: it is taken only from its writer or a raid planner (Vouched), else a planner's copy is asked for.
 local addonName, ns = ...
 
 local RaidPlan = ns:NewModule("RaidPlan")
@@ -305,6 +305,17 @@ local function Trusted(root, kind, rec)
     if not Entitled(root, kind, rec) then return false end
     if root.OK then root.OK[k] = true end
     return true
+end
+
+-- May this copy of a version be believed about who wrote it (rec.by)? A copy from its writer (another character of
+-- theirs; a live RPU, whose by must be its sender) or made here (via nil / me) is; one passed on by anybody else only
+-- when they could have written it themselves: a raid planner (who also names leaders), for a team also the guild
+-- council. Any guild member answers the login sync, and a made-up copy "by" a raid leader would otherwise show on a
+-- client that never had the record, or replace one it had. An unvouched copy waits (HoldBack) while a planner's copy
+-- is asked for (AskPlanner); a planner who logs in later sends theirs in the sync.
+local function Vouched(kind, rec, via)
+    if via == nil or Util.IsMe(via) or SamePlayer(via, rec.by) or CanAssignLeader(via) then return true end
+    return kind == "T" and CanTeams(via)
 end
 
 -- Do two versions of a raid record name the same leader, named by the same player, in their own fields (rl / rlb)?
@@ -984,6 +995,11 @@ local function MergeRecord(root, kind, rec, via)
         end
     elseif CountTable(store) >= KIND_CAP[kind] then
         ns:Debug("RaidPlan: %s store full, %s dropped", kind, rec.id)
+        return false
+    end
+    if not Vouched(kind, rec, via) then
+        HoldBack(kind, rec, via)
+        AskPlanner((kind == "T" and "T:" or kind == "S" and "S:" or "O:") .. rec.id, rec.rev, via)
         return false
     end
     store[rec.id] = rec
