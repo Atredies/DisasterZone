@@ -3,6 +3,8 @@ every other client refusing it.
 
   1. GM rules: an officer's RLL that names the GM as author (lrb / arb / dcb / rcb) no longer changes the loot,
      attendance, Discord or recruitment rules; a GMR is taken only from the Guild Master (rank 0) as its sender.
+  2. Reserves: a raid assistant's RVS no longer replaces the raid's soft-reserve list (only the authority, or whoever
+     holds the list I have).
 
 Run: luaenv\\Scripts\\python.exe tests\\sync\\test_authority.py [-k name]   (from dev)
 """
@@ -96,6 +98,37 @@ def a_member_who_missed_the_gm_gets_the_rules_from_the_gm_only():
     w.tick(60)
     assert nala.eval_py("return ns.Guild:GetAttendanceRules()") == {"o": 7, "d": 9}
     no_errors(w)
+
+
+# ------------------------------------------------------------------------------------------------------------------
+# 2. Reserves
+# ------------------------------------------------------------------------------------------------------------------
+@case
+def a_raid_assistant_cannot_replace_the_reserves():
+    from rv_common import reserve_raid, open_reserves, key as rkey  # noqa: E402
+    r = reserve_raid()
+    open_reserves(r, n=1)
+    w = r.w
+    w.make_raid(list(r.c.values()), master_looter=r["Alice"], leader=r["Alice"], assistants=[r["Frank"]],
+                extra_members=r.extra)
+    w.tick(2)
+
+    def host(cl):
+        return cl.eval_py("local L = ns.Reserves:Get(); return L and { by = L.by, id = L.id }")
+
+    assert host(r["Carol"])["by"] == rkey("Alice")
+    r["Frank"].eval("ns.Comm:Send({ t = 'RVS', id = 'forged', by = ..., v = 99, at = GetServerTime(), rk = 'Karazhan', "
+                    "n = 3, o = 1, h = {}, r = { [(...)] = '28766:d' } }, 'RAID', nil, 'ctrl')", rkey("Frank"))
+    w.tick(2)
+    for n in ("Bob", "Carol", "Gina"):
+        h = host(r[n])
+        assert h["by"] == rkey("Alice") and h["id"] != "forged", (n, h)
+    # nor wipe it
+    r["Frank"].eval("local L = ...; ns.Comm:Send({ t = 'RVS', id = L, x = true }, 'RAID', nil, 'ctrl')",
+                    host(r["Carol"])["id"])
+    w.tick(2)
+    assert host(r["Carol"]) is not None
+    w.assert_no_errors()
 
 
 if __name__ == "__main__":
