@@ -25,8 +25,14 @@
   </tr>
 </table>
 
-<p align="center"><sub>The guild-facing documentation is <code>addon/DisasterZone/README.md</code>; members download from
-<a href="https://github.com/tsumilo/DisasterZone-releases">DisasterZone-releases</a>.</sub></p>
+<p align="center"><sub>The guild-facing documentation is <code>addon/DisasterZone/README.md</code>. Members download from this
+repo's <a href="https://github.com/Atredies/DisasterZone/releases">Releases</a> (branch <code>main</code> holds the release tree;
+this branch, <code>dev</code>, holds the source).</sub></p>
+
+> **DisasterZone was written by [tsumilo](https://github.com/tsumilo)**, who handed its development over in November
+> 2026. This repo continues it from release **1.5.5**: the source comes from
+> [tsumilo/DisasterZone-dev](https://github.com/tsumilo/DisasterZone-dev), the release tree from
+> [tsumilo/DisasterZone-releases](https://github.com/tsumilo/DisasterZone-releases). See [Credits](#credits).
 
 <p align="center"><img src=".github/readme/divider.png" width="70%" alt=""></p>
 
@@ -189,3 +195,17 @@ Read `addon\DisasterZone\NOTICE.md` before sharing outside the guild. The data f
   <img src="launcher/src-tauri/icons/128x128.png" width="48" alt="DisasterZone seal"><br>
   <sub>Made for &lt;Casual Disaster&gt;</sub>
 </p>
+
+## Credits
+
+DisasterZone was written by **tsumilo** for &lt;Casual Disaster&gt; on TBC Anniversary, in
+[tsumilo/DisasterZone-dev](https://github.com/tsumilo/DisasterZone-dev) (source, with its full history kept here) and
+[tsumilo/DisasterZone-releases](https://github.com/tsumilo/DisasterZone-releases) (releases, the base of `main`). This
+repo continues it from 1.5.5 after the handover; the original author's commits are kept as they were. The launcher in
+`launcher/` is MIT (`launcher/LICENSE`). The item data is generated from **AtlasLoot Classic** (GPL v2). Libraries,
+data sources and art credits: [`addon/DisasterZone/NOTICE.md`](addon/DisasterZone/NOTICE.md). World of Warcraft
+names, IDs and game art belong to Blizzard Entertainment.
+
+The sister project [Atredies/DisasterZoneForever](https://github.com/Atredies/DisasterZoneForever) ports the same
+addon to WoW Forever. Docs for this repo: [`_DisasterZone-vault/Home.md`](_DisasterZone-vault/Home.md); on Linux,
+see its `06-Operations/Linux Dev Setup.md`.
