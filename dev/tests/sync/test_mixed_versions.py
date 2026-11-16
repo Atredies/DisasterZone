@@ -72,7 +72,11 @@ def old_addon():
     return OLD_DIR
 
 
-OLD_140 = "release-1.4.0"
+# (the tag, or the "Release 1.4.0" commit when this clone lacks it: tags are not carried by every fork, and a clone
+# that also holds the release tree can carry a release-1.4.0 tag without the addon source, so check for the source)
+OLD_140 = "release-1.4.0" if subprocess.call(["git", "-C", REPO, "rev-parse", "-q", "--verify",
+                                              "release-1.4.0:addon/DisasterZone/DisasterZone.toc"],
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0 else "1209b80d"
 OLD_140_DIR = os.path.join(OLD_ROOT, "v140", "DisasterZone")
 
 
