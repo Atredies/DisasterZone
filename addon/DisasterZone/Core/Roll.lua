@@ -2,6 +2,9 @@ if DisasterZoneBoot and DisasterZoneBoot.Run("Core/Roll.lua", ...) then return e
 -- Roll sessions (Addendum A §19): one open roll at a time (others wait in a queue), RS/RR/RE/RW
 -- raid messages, /roll parsing from CHAT_MSG_SYSTEM, a BiS-aware winner suggestion and the award
 -- flow (master-loot hand-out or confirm, then record + announce). Sessions live in memory only.
+-- A raider who logs in / reloads in a group asks for open rolls (RQ); the starter of a roll
+-- still open sends its RS again on the group channel with the time left (re = 1), so the roll window comes back.
+-- Clients that already know the roll (open or closed) ignore it: a closed roll is never reopened.
 -- Dungeon mode (Addendum B §22.2): in a 5-man party the same messages run on PARTY.
 -- Addendum C §23: a loot message for a rolled item resolves its session on every client
 -- (Roll:OnItemLooted, via = "loot"), and awards made outside the roll UI go through
@@ -60,6 +63,8 @@ local MAX_NOTE_LEN = 64
 local LOOT_MATCH_AGE = 15 * 60   -- a loot message resolves sessions created at most 15 min ago
 local SOLO_DURATION = 5          -- 1.4.3: an item one player reserved: no roll, the session only names them
 local MAX_RK = 40                -- reservers named in an RS
+local RQ_DELAY, RQ_JITTER = 6, 2 -- after a login / reload in a group: ask for open rolls (after the raid council's CR)
+local RQ_REPLY_DELAY = 1         -- the starter answers RQs at most once per roll per this many seconds (coalesced)
 
 local MAX_VOTES = 40             -- voters per session (one vote per council member in the group)
 
@@ -2521,8 +2526,10 @@ local function OnRollStart(sender, msg, dist)
     local now = GetServerTime()
     local ts = tonumber(msg.ts)
     -- Clash resolution only needs same-moment starts: a claimed start far in the past (or NaN) would let any
-    -- council member / master looter pre-empt the running roll everywhere.
-    if not ts or ts ~= ts or ts < now - RS_TS_PAST or ts > now + RS_TS_FUTURE then ts = now end
+    -- council member / master looter pre-empt the running roll everywhere. A re-sent RS (re = 1, the answer to an
+    -- RQ) carries the time left as d and the real start, which may be up to a whole roll ago.
+    local past = (msg.re == 1) and (RS_TS_PAST + MAX_DURATION) or RS_TS_PAST
+    if not ts or ts ~= ts or ts < now - past or ts > now + RS_TS_FUTURE then ts = now end
 
     Prune()
     local ses = NewSession({ id = id, i = itemID, s = s, b = b, c = c, starter = sender, state = "open" })
@@ -2647,6 +2654,36 @@ local function OnRollEnd(sender, msg, dist)
     else
         CloseSession(ses)
     end
+end
+
+-- RQ {}: a group member logged in / reloaded and asks for open rolls. The starter of a roll that is
+-- still open here sends its RS again on the group channel, d = the seconds left, re = 1. Every client that knows the
+-- roll already (open, closed or awarded) drops it on the id; several RQs at once get one answer per roll.
+local function ResendStart(ses)
+    if ses.state ~= "open" or not ses.isLocal or ses.demo or not ses.endsAt then return end
+    local left = floor(ses.endsAt - GetTime())
+    if left < MIN_REMOTE_DURATION then return end   -- nearly over: a window now would only flash
+    Send({ t = "RS", id = ses.id, i = ses.i, s = ses.s, b = ses.b, d = left, ts = ses.startedAt, c = ses.c,
+           pl = (not ses.party) and (ses.plain and 1 or 0) or nil, rv = ses.rv, rk = ses.rk, re = 1 })
+end
+
+local function OnRollQuery(sender, msg, dist)
+    if DemoOn() or not GroupDist(dist) or Util.IsMe(sender) then return end
+    for _, ses in pairs(sessions) do
+        if ses.state == "open" and ses.isLocal and not ses.demo and not ses.resendPending then
+            ses.resendPending = true
+            Util.After(RQ_REPLY_DELAY, function()
+                ses.resendPending = nil
+                ResendStart(ses)
+            end)
+        end
+    end
+end
+
+-- After a login / reload: in a group without an open roll, ask once whether one is running.
+local function AskOpenRolls()
+    if DemoOn() or not GroupChannel() or Roll:GetActive() then return end
+    Send({ t = "RQ" })
 end
 
 -- Deterministic choice between two conflicting awards of one session (every client picks the same):
@@ -2885,6 +2922,11 @@ local function Guarded(fn)
     end
 end
 
+-- Login and /reload both run OnLogin: a roll that opened before it comes back (RQ, answered by its starter).
+function Roll:OnLogin()
+    Util.After(RQ_DELAY + math.random() * RQ_JITTER, AskOpenRolls)
+end
+
 function Roll:OnInit()
     ns:RegisterEvent("CHAT_MSG_SYSTEM", function(_, text) Roll:OnSystemMessage(text) end)
     ns:On("DEMO_TOGGLED", OnDemoToggled)
@@ -2898,6 +2940,7 @@ function Roll:OnInit()
         Comm:Register("RW", OnRollWin)
         Comm:Register("RT", OnRollTiers)
         Comm:Register("RV", OnRollVote)
+        Comm:Register("RQ", OnRollQuery)
     end
     ns:RegisterSlash("roll", SlashRoll, "<item link> - start a raid roll for an item (loot council / master looter); 'end' ends it")
 
