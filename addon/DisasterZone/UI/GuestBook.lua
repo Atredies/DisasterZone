@@ -792,7 +792,7 @@ local function fillNote(kind, key, e, bl)
     local black = kind == "black"
     local text, by, at, via
     if black then
-        text, by, at = bl.reason, bl.by, bl.at
+        text, by, at, via = bl.reason, bl.by, bl.at, bl.via
     else
         text, by, at, via = e and e.note, e and e.noteBy, e and e.noteAt, e and e.noteVia
     end

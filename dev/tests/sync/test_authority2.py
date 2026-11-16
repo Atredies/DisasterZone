@@ -5,7 +5,7 @@ hand-made message, every other client refusing it (or naming who passed it on), 
      owner's, a raid planner's or the raid's own leader's copy is. A held-back copy is asked for from the owner and a
      planner who are online, so every client still ends up with the real answer. (Team waitlists the same.)
   3. "by" labels: officer notes, guest book notes, recruit removals keep who passed them on when the sender is not
-     the writer.
+     the writer. (The raid blacklist the same.)
   4. LootReserve mirror: only the group's leader, its master looter (LootReserve's own rule) or the raid's loot
      authority host a session that becomes my read-only list.
 
@@ -259,6 +259,25 @@ def a_recruit_removal_passed_on_names_who_passed_it():
     p = aurel.eval_py("local b = ns.DB:GuildBucket('recruit', false, ns.Util.GuildKey()); return b.p[...]",
                       "Newbie-Thunderstrike")
     assert p["by"] == key("Gina") and p["rb"] == key("Missy") and p["n"][0]["rb"] == key("Missy"), p
+    no_errors(w)
+
+
+@case
+def a_blacklist_entry_passed_on_names_who_passed_it():
+    w, c = _officers_guild()
+    gm, missy, aurel = c["Gina"], c["Missy"], c["Aurel"]
+    bad = "Badguy-Thunderstrike"
+    send = ("local bad, gm, to, now = ...; ns.Comm:Send({ t = 'BLL', rev = now, by = gm, f = 2, x = {}, "
+            "l = { { k = bad, r = 'Ninja looter', b = gm, a = now, v = now } } }, 'WHISPER', to, 'data')")
+    now = gm.eval("return GetServerTime()") + 5
+    missy.eval(send, bad, key("Gina"), key("Aurel"), now)
+    w.tick(3)
+    e = aurel.eval_py("return ns.RaidPlan:GetBlacklistEntry(...)", bad)
+    assert e["by"] == key("Gina") and e["via"] == key("Missy"), e
+    gm.eval(send, bad, key("Gina"), key("Aurel"), now)
+    w.tick(3)
+    e = aurel.eval_py("return ns.RaidPlan:GetBlacklistEntry(...)", bad)
+    assert e["by"] == key("Gina") and "via" not in e, e
     no_errors(w)
 
 

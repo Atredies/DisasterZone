@@ -1959,12 +1959,23 @@ local function OnBlacklist(sender, msg, dist)
         if v > 0 then e.v = v end           -- (the same shape as mine before the two are hashed)
         local cur = rec.l[k]
         local cv = Merge.EntryRev(cur)
+        -- 2026-11-09 (authority holes, round 2): who blacklisted them (by) is the sender's word: from anyone but that
+        -- manager the entry keeps who passed it on (rec.rb[k], local), and the same entry from its writer clears it
+        local first = SamePlayer(e.by, sender)
         if v <= limit and v > (rec.x[k] or 0)
             and (not cur or v > cv or (v == cv and Util.Hash(e) > Util.Hash(cur)))
             and (cur or CountTable(rec.l) < MAX_BLACKLIST) then
             rec.l[k] = e
+            if type(rec.rb) ~= "table" then rec.rb = {} end
+            rec.rb[k] = not first and sender or nil
+            changed = true
+        elseif first and cur and type(rec.rb) == "table" and rec.rb[k] and Util.Hash(e) == Util.Hash(cur) then
+            rec.rb[k] = nil
             changed = true
         end
+    end
+    if type(rec.rb) == "table" then
+        for k in pairs(rec.rb) do if not rec.l[k] then rec.rb[k] = nil end end
     end
     Merge.TrimMarks(rec)
     -- what I hold that the sender lacks (a list before 1.3.3 can't tell: it is not answered)
@@ -2037,7 +2048,7 @@ function RaidPlan:GetBlacklistEntry(key)
     local hit = InSet(rec.l, key)
     local e = hit and rec.l[hit]
     if type(e) ~= "table" then return nil end
-    return { key = hit, reason = e.r, by = e.by, at = e.at }
+    return { key = hit, reason = e.r, by = e.by, at = e.at, via = type(rec.rb) == "table" and rec.rb[hit] or nil }
 end
 
 function RaidPlan:IsBlacklisted(key)
@@ -2049,7 +2060,10 @@ function RaidPlan:GetBlacklist()
     local out = {}
     local rec = BlacklistRec(false)
     for key, e in pairs(rec and rec.l or {}) do
-        if type(e) == "table" then out[#out + 1] = { key = key, reason = e.r, by = e.by, at = e.at } end
+        if type(e) == "table" then
+            out[#out + 1] = { key = key, reason = e.r, by = e.by, at = e.at,
+                              via = type(rec.rb) == "table" and rec.rb[key] or nil }
+        end
     end
     tsort(out, function(a, b) return a.key < b.key end)
     return out
@@ -2087,6 +2101,7 @@ function RaidPlan:SetBlacklisted(name, reason)
     if type(rec.x) ~= "table" then rec.x = {} end
     local v = max(Now(), Merge.EntryRev(cur) + 1, (rec.x[key] or 0) + 1)
     rec.l[key] = { r = r, by = Util.PlayerKey(), at = cur and cur.at or Now(), v = v }
+    if type(rec.rb) == "table" then rec.rb[key] = nil end
     rec.x[key] = nil
     SaveBlacklist(rec)
     return true, key
