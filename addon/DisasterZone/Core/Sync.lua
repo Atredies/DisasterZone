@@ -413,7 +413,8 @@ end
 --   10 pd  raid plans (RaidPlan, Addendum J §56)    20 blr  the raid blacklist (RaidPlan)
 --   30 gnr the guest book's notes (GuestBook, 1.3)   40 sd   strategies + assignments (Strategy, Addendum K)
 --   50 ed  events (1.3.2)    60 od  polls (1.3.4)    70 zd   prized items (1.3.5)
---   80 rlr the raid leaders list (Guild, Addendum J §62)   90 av  accounts (Guild, 1.2)
+--   80 rlr the raid leaders list (Guild, Addendum J §62)   82 gmr the GM's rules (Guild)
+--   90 av  accounts (Guild, 1.2)
 -- (Older clients ignore a field they don't know.) Registering a field again replaces it.
 function Sync:RegisterHelloField(field, order, send, seen)
     if type(field) ~= "string" then return end

@@ -483,6 +483,8 @@ def the_hello_is_the_same_as_140s():
     # (1.4.2 adds dcr, the Discord links' rev: Core/Bridge.lua)
     assert "dcr" in new and "dcr" not in old
     new.pop("dcr")
+    # (the GM's rules on their own record: gmr, Core/Guild.lua)
+    new.pop("gmr", None)
     assert set(old) == set(new), (sorted(old), sorted(new))
     assert {"rlr", "av", "pd", "blr", "gnr", "sd", "ed", "od", "zd"} <= set(new), sorted(new)
     # (the digest hashes are over records with ids made from each world's clock: each is its own client's hash)
