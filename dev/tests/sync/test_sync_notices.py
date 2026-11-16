@@ -2,6 +2,8 @@
 
   * a BiS list this client can't read is said once per player per session (Store:Put), not only in a debug line;
   * a late login learns the versions of who was already online (V, whispered back to its login HELLO);
+  * the roster lists anyone heard with DisasterZone with the others, not under "Without DisasterZone", while their
+    professions summary is still on its way.
 
 Run: luaenv\\Scripts\\python.exe tests\\sync\\test_sync_notices.py [-k name]   (from dev)
 """
@@ -44,6 +46,34 @@ def a_late_login_learns_the_versions_of_who_was_already_online():
     missy.eval("ns.db.peers[...] = { v = '0.0.1', lastSeen = 0 }", gm_key)
     w.tick(40)
     assert missy.eval("return ns.Sync:GetPeer(...).v", gm_key) == gm.eval("return ns.version")
+    no_errors(w)
+
+
+@case
+def a_member_with_the_addon_is_not_listed_without_it():
+    """The roster grouped by shared professions: a guildmate running DisasterZone whose summary had not arrived yet
+    sat under "Without DisasterZone" (and the tooltip said they had not logged in with it)."""
+    w = World()
+    gm = Client(w, "Gina", class_file="WARRIOR", guild_rank=0)
+    missy = Client(w, "Missy", class_file="HUNTER", guild_rank=1)
+    gm.load_addon()
+    missy.load_addon()
+    w.tick(30)
+    m_key = "Missy-Thunderstrike"
+    assert gm.eval("return ns.Sync:GetPeer(...) ~= nil", m_key) is True
+    # her professions summary not here yet
+    gm.eval("local b = ns.db.prof and ns.db.prof[ns.Guild:GetGuildKey()]; if b then b[...] = nil end", m_key)
+    gm.slash("/dz members")
+    w.tick(1)
+    rows = gm.eval_py("""local out = {}
+      for _, d in ipairs(ns.MembersUI:GetPanel().roster.data or {}) do
+        out[#out + 1] = d.kind == "sep" and ("sep:" .. d.text) or (d.key or "")
+      end
+      return out""")
+    rows = list(rows.values()) if isinstance(rows, dict) else list(rows or [])
+    assert m_key in rows, rows
+    if "sep:Without DisasterZone" in rows:
+        assert rows.index(m_key) < rows.index("sep:Without DisasterZone"), rows
     no_errors(w)
 
 
