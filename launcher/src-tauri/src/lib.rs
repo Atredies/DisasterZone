@@ -33,8 +33,13 @@ struct Status {
     flavor_dir: Option<String>,
     wow_running: bool,
     launcher_version: &'static str,
+    /// the newest check for a new launcher (Settings > About), none before the first
+    launcher_check: Option<background::LauncherCheck>,
     source: String,
 }
+
+/// Where a launcher that can't update itself sends people (the hero's "Download the launcher").
+const RELEASES_PAGE: &str = "https://github.com/tsumilo/DisasterZone-releases/releases/latest";
 
 pub(crate) fn layout(s: &Settings) -> Result<Layout> {
     match s.flavor_dir() {
@@ -53,14 +58,14 @@ fn autodetect(s: &mut Settings, installs: &[WowInstall]) {
     if let Some(w) = pick {
         s.wow_root = Some(w.root.clone());
         if !w.flavors.contains(&s.flavor) {
-            s.flavor = w.flavors[0].clone();
+            s.set_flavor(w.flavors[0].clone());
         }
         let _ = state::save(s);
     }
 }
 
 #[tauri::command]
-fn status() -> Status {
+fn status(log: State<'_, background::LauncherLog>) -> Status {
     let mut s = state::load();
     let installs = wow::detect();
     autodetect(&mut s, &installs);
@@ -71,9 +76,26 @@ fn status() -> Status {
         installs,
         wow_running: wow::running(),
         launcher_version: env!("CARGO_PKG_VERSION"),
+        launcher_check: log.get(),
         source: s.source(),
         settings: s,
     }
+}
+
+/// The window looked for a new launcher itself (the updater plugin's check from the page): keep what it found or
+/// why it failed, as the tray's check does.
+#[tauri::command]
+fn launcher_checked(
+    found: Option<String>,
+    error: Option<String>,
+    log: State<'_, background::LauncherLog>,
+) -> background::LauncherCheck {
+    log.note(found, error)
+}
+
+#[tauri::command]
+fn open_releases() -> Result<()> {
+    tauri_plugin_opener::open_url(RELEASES_PAGE, None::<&str>).map_err(|e| crate::core::Error::Msg(e.to_string()))
 }
 
 #[tauri::command]
@@ -89,7 +111,7 @@ fn set_wow_path(path: String, flavor: Option<String>) -> Result<Settings> {
     let flavors = wow::flavors_in(&root);
     let mut s = state::load();
     let want = flavor.or(picked_flavor).unwrap_or_else(|| s.flavor.clone());
-    s.flavor = if flavors.contains(&want) { want } else { flavors[0].clone() };
+    s.set_flavor(if flavors.contains(&want) { want } else { flavors[0].clone() });
     s.wow_root = Some(root.to_string_lossy().to_string());
     state::save(&s)?;
     Ok(s)
@@ -109,6 +131,7 @@ fn set_settings(
     auto_install: Option<bool>,
     autostart: Option<bool>,
     sync_server: Option<String>,
+    show_presence: Option<bool>,
 ) -> Result<Settings> {
     let mut s = state::load();
     if let Some(c) = channel {
@@ -143,6 +166,9 @@ fn set_settings(
     }
     if let Some(v) = sync_server {
         s.sync_server = v.trim().to_string();
+    }
+    if let Some(v) = show_presence {
+        s.show_presence = v;
     }
     state::save(&s)?;
     background::sync_tray(&app).map_err(|e| crate::core::Error::Msg(e.to_string()))?;
@@ -182,6 +208,8 @@ struct Check {
     packs: Vec<PackView>,
     /// the release has games and the one-time picker wasn't answered yet
     needs_pick: bool,
+    /// the id of the key whose signature on the release list checked out (Home's "signed release" line)
+    key_id: String,
 }
 
 /// One pack of the release as the Games tab and Home show it.
@@ -204,6 +232,8 @@ struct PackView {
     /// what Update does with it: "install" | "update" | "same" | "remove" | "" (not wanted, not installed)
     action: String,
     files: usize,
+    /// files Update fetches for it now (new or different from the release)
+    changed: usize,
     /// what the release's copy takes on disk, and its full download
     bytes: u64,
     gz: u64,
@@ -236,6 +266,7 @@ fn pack_views(lay: &Layout, m: &Manifest, s: &Settings, plan: &Plan) -> Vec<Pack
                 chosen: s.packs.get(&p.id).copied(),
                 action: action.into(),
                 files: m.folders.get(&p.folder).map_or(0, |f| f.len()),
+                changed: fp.map_or(0, |f| f.fetch),
                 bytes,
                 gz,
                 download_bytes: fp.map_or(0, |f| f.download_bytes),
@@ -251,9 +282,11 @@ async fn check() -> Result<Check> {
     let s = state::load();
     let lay = layout(&s)?;
     let src = Source::parse(&s.source())?;
-    let m = src.manifest(&ReleaseKey::builtin(), &s.channel).await?;
-    let plan = install::make_plan(&lay, &m, &install::wanted(&lay, &m, &s.packs))?;
+    let key = ReleaseKey::builtin();
+    let m = src.manifest(&key, &s.channel).await?;
+    let plan = install::check_plan(&lay, &m, &install::wanted(&lay, &m, &s.packs))?;
     Ok(Check {
+        key_id: key.id,
         packs: pack_views(&lay, &m, &s, &plan),
         needs_pick: m.has_games() && !s.packs_picked,
         older: m.seq < s.seen_seq.get(&s.channel).copied().unwrap_or(0),
@@ -326,6 +359,35 @@ async fn restore(id: String, busy: State<'_, Busy>) -> Result<Option<String>> {
     }
     state::save(&s)?;
     Ok(out)
+}
+
+/// Backups > Back up now (install::backup_now): copies of the addon folders and the saved variables. Copying a few
+/// hundred MB takes a moment, so off the main thread.
+#[tauri::command]
+async fn backup_now(busy: State<'_, Busy>) -> Result<String> {
+    let _guard = busy.0.try_lock().map_err(|_| crate::core::Error::Msg("already working".into()))?;
+    let s = state::load();
+    let lay = layout(&s)?;
+    let keep = s.keep_backups;
+    tokio::task::spawn_blocking(move || install::backup_now(&lay, keep))
+        .await
+        .map_err(|e| crate::core::Error::Msg(e.to_string()))?
+}
+
+/// The title bar's "online now": who of the guild's linked launchers is in game (asked once a minute while shown).
+#[tauri::command]
+async fn presence() -> sync::PresenceView {
+    sync::presence().await
+}
+
+/// Backups > the trash can on a row: that backup goes for good.
+#[tauri::command]
+async fn delete_backup(id: String, busy: State<'_, Busy>) -> Result<()> {
+    let _guard = busy.0.try_lock().map_err(|_| crate::core::Error::Msg("already working".into()))?;
+    let lay = layout(&state::load())?;
+    tokio::task::spawn_blocking(move || install::delete_backup(&lay, &id))
+        .await
+        .map_err(|e| crate::core::Error::Msg(e.to_string()))?
 }
 
 /// The Games tab and the picker: which packs to keep ({id: on}; Update then installs or takes them out).
@@ -408,9 +470,25 @@ async fn sync_run(app: AppHandle) -> Result<sync::SyncView> {
     sync::sync_now(&app).await
 }
 
+/// Play (play.rs): what it did, for the window's message. Looking through the running programs takes a moment, so
+/// off the main thread.
 #[tauri::command]
-fn play() -> Result<()> {
-    crate::core::play::play(&state::load())
+async fn play() -> Result<&'static str> {
+    tokio::task::spawn_blocking(|| crate::core::play::play(&state::load()))
+        .await
+        .map_err(|e| crate::core::Error::Msg(e.to_string()))?
+}
+
+/// The character played last, the region and the guild's next raids, from the game's files (player.rs). Reading
+/// the SavedVariables takes a moment, so off the main thread; nothing found is an empty answer, not an error.
+#[tauri::command]
+async fn player() -> crate::core::player::Player {
+    tokio::task::spawn_blocking(|| match layout(&state::load()) {
+        Ok(lay) => crate::core::player::read(&lay.flavor_dir, crate::core::player::now()),
+        Err(_) => Default::default(),
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -428,6 +506,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(Busy::default())
+        .manage(background::LauncherLog::default())
         .setup(|app| {
             let handle = app.handle().clone();
             let mut s = state::load();
@@ -461,11 +540,17 @@ pub fn run() {
             check,
             update,
             backups,
+            backup_now,
+            delete_backup,
+            presence,
             restore,
             set_packs,
             remove_pack,
             open_folder,
+            open_releases,
+            launcher_checked,
             play,
+            player,
             sync_status,
             sync_link,
             sync_unlink,

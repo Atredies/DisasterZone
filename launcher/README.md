@@ -2,10 +2,28 @@
 
 Desktop app (Windows, macOS, Linux) that installs and updates the DisasterZone addon and keeps backups you can go
 back to. A release is a set of folders, one per pack (manifest format 2, launcher 0.4): the core `DisasterZone`,
-the Extra `DisasterZone_Rooms` (3D rooms, on by default) and one `DisasterZone_<Game>` per game. The Games tab
-installs and removes games; the first release with games asks once which to keep (played ones ticked, from
-`DisasterZoneDB.games[id].opened` in the saved variables). Tauri 2: Rust in `src-tauri/`, the window is plain
-HTML/CSS/JS in `ui/` (no bundler; card art in `ui/games/`).
+the Extra `DisasterZone_Rooms` (3D rooms, on by default) and one `DisasterZone_<Game>` per game. The Library
+installs and removes games, and every game has a page of its own; the first release with games asks once which to
+keep (played ones ticked, from `DisasterZoneDB.games[id].opened` in the saved variables). Tauri 2: Rust in
+`src-tauri/`, the window is plain HTML/CSS/JS in `ui/` (no bundler): `index.html`, `style.css`, the scripts in
+`ui/js/` (util, demo, core, then one per page, main last), Cinzel and Barlow in `ui/fonts/` (SIL OFL, bundled: the
+window's content security policy allows no web fonts), loading-screen art in `ui/art/`, game art in `ui/games/`.
+
+From the game's own files (`src-tauri/src/core/player.rs`, the `player` command) Home shows the character played
+last (the newest `WTF/Account/<acct>/<realm>/<char>` folder, class and spec from `DisasterZoneDB`) and the guild's
+next raid with its sign-ups: `DisasterZoneDB.launcher`, which the addon writes at every logout (Core/Bridge.lua
+`LauncherHome`), or the Discord snapshot `DisasterZoneBridgeDB.snap` where a launcher is linked, whichever is newer.
+Hold the Line's page works out the week's challenge as the game does (Social.lua), with the region from
+`WTF/Config.wtf`'s portal and the challenge names from the release's notes (`release.py` puts `htlWeekly` there).
+
+Azeromon, Hold the Line and The Binding of Illidan have films (`ui/films/<id>.webm`): their Games-hub covers as they
+play in game, drawn frame by frame in the test harness by `dev/tools/film_covers.py` (`--still` to judge one frame,
+`--encode` to encode again; about 15, 15 and 25 minutes to draw). They play behind the game's page and in its Library
+card on hover, never with reduced motion.
+
+The title bar's "online now" lists who of the guild is in game: every linked launcher tells the bot at each sync
+whether the game runs and as whom (`SyncUp.game`, Settings > Discord "Show me as in game" turns it off), the bot keeps
+a last-seen per member (`server/src/presence.rs`), and the window asks `GET /api/presence` once a minute.
 
 ## How releases reach it
 
@@ -30,6 +48,10 @@ A development copy (BuildInfo id `"dev"`, or `DisasterZone` or any `DisasterZone
   (`dev\keys\updater_password.txt`) in the environment; CI has both as repository secrets.
 - Self-update: the launcher reads `latest.json` from the release `launcher-latest` (set in `tauri.conf.json`,
   public key from `dev\keys\updater.key.pub`). Losing `updater.key` means members must reinstall the launcher by hand.
+  The window looks at start, on its 30-minute re-check, when it comes back from the tray, on Check again and when
+  a release needs a newer launcher (then the hero's button updates it, or opens the releases page if none is found).
+  Tray mode's 5-minute check installs it by itself (that setting on, window closed) or shows the window's bar at once.
+  Settings > About shows the newest check and why it failed.
 - All three OSes: `dev\tools\release.py launcher-push` copies this folder into the releases repository and pushes
   tag `launcher-v<version>`; `ci/launcher.yml` builds and publishes the installers. Raise the version in
   `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json` first.
@@ -37,9 +59,14 @@ A development copy (BuildInfo id `"dev"`, or `DisasterZone` or any `DisasterZone
 ## Tests
 
 - `cd src-tauri && cargo test` — core: signatures, unsafe paths, install/update/repair, bad objects, dev copies,
-  backups, restore, pruning, WoW folder detection.
+  backups, restore, pruning, WoW folder detection, the player's character and raids.
 - `DZ_PUB=<folder from release.py publish --out> cargo test --test e2e_published` — installs a real published tree
   (every pack). `DZ_PUB_KEY=<public hex>` checks a tree signed with a test key instead of `release_key.json`.
-- `dev\tests\launcher\test_publish.py` — the Python publisher.
-- Serving `ui/` and opening it in a browser runs the window on demo data: 1.5.4 meeting the first release with game
-  packs (the picker opens); `?state=updated` starts after that update; `?tab=games` opens a tab.
+- `dev\tests\launcher\test_publish.py` — the Python publisher; `test_weekly.py` — the Hold the Line page's weekly
+  challenge against the game's own Lua (node and lupa).
+- Serving `ui/` and opening it in a browser runs the window on demo data (`ui/js/demo.js`): 1.5.4 meeting the first
+  release with game packs (the picker opens); `?state=updated` starts after that update; `?state=ready` has 1.5.6
+  waiting and `?state=updating` runs it and holds at 64% (`?state=checking`: half way through checking the files);
+  `?state=loading` never gets the release list (the placeholders); `?page=library|notes|backups|settings` or
+  `?page=game&arg=holdtheline` opens a page. `?launcher=ready|tray|fail|gate|gate-none|gate-fail` shows the
+  launcher's own update states.

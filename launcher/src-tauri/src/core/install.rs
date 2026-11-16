@@ -214,8 +214,17 @@ pub fn sha256_file(path: &Path) -> Result<(String, u64)> {
     Ok((hex::encode(h.finalize()), n))
 }
 
-/// {relative path with '/': (sha256, size)} of every file under `dir` ({} when it does not exist).
+/// {relative path with '/': (sha256, size)} of every file under `dir` ({} when it does not exist), every file read.
 pub fn scan(dir: &Path) -> Result<BTreeMap<String, (String, u64)>> {
+    scan_with(dir, false)
+}
+
+/// The hashes read so far, by path: (size, modified, sha256). A check (`trust`) reads only the files whose size or
+/// time changed since; an update reads every file, and what it reads is kept too. Checks run at every start, after
+/// every change and twice an hour: hashing a few hundred MB each time held the window's new state back for seconds.
+static HASHES: std::sync::Mutex<BTreeMap<PathBuf, (u64, SystemTime, String)>> = std::sync::Mutex::new(BTreeMap::new());
+
+fn scan_with(dir: &Path, trust: bool) -> Result<BTreeMap<String, (String, u64)>> {
     let mut out = BTreeMap::new();
     if !dir.is_dir() {
         return Ok(out);
@@ -226,7 +235,18 @@ pub fn scan(dir: &Path) -> Result<BTreeMap<String, (String, u64)>> {
             continue;
         }
         let rel = entry.path().strip_prefix(dir).unwrap().to_string_lossy().replace('\\', "/");
-        out.insert(rel, sha256_file(entry.path())?);
+        let meta = entry.metadata().map_err(|e| Error::Msg(e.to_string()))?;
+        let when = meta.modified().unwrap_or(UNIX_EPOCH);
+        if trust {
+            let known = HASHES.lock().unwrap().get(entry.path()).filter(|(n, t, _)| *n == meta.len() && *t == when).map(|x| x.2.clone());
+            if let Some(sha) = known {
+                out.insert(rel, (sha, meta.len()));
+                continue;
+            }
+        }
+        let (sha, n) = sha256_file(entry.path())?;
+        HASHES.lock().unwrap().insert(entry.path().to_path_buf(), (n, when, sha.clone()));
+        out.insert(rel, (sha, n));
     }
     Ok(out)
 }
@@ -302,8 +322,18 @@ impl Plan {
     }
 }
 
-/// What it takes to bring the `wanted` folders to the release (and to take out the installed ones that aren't).
+/// What it takes to bring the `wanted` folders to the release (and to take out the installed ones that aren't),
+/// every file read: what an update goes by.
 pub fn make_plan(layout: &Layout, m: &Manifest, wanted: &[String]) -> Result<Plan> {
+    plan_with(layout, m, wanted, false)
+}
+
+/// The same for a check: files unchanged since they were last read keep their hash (scan_with).
+pub fn check_plan(layout: &Layout, m: &Manifest, wanted: &[String]) -> Result<Plan> {
+    plan_with(layout, m, wanted, true)
+}
+
+fn plan_with(layout: &Layout, m: &Manifest, wanted: &[String], trust: bool) -> Result<Plan> {
     let mut plan =
         Plan { fetch: vec![], remove: vec![], folders: vec![], unchanged: 0, download_bytes: 0, up_to_date: false };
     let empty = BTreeMap::new();
@@ -319,7 +349,7 @@ pub fn make_plan(layout: &Layout, m: &Manifest, wanted: &[String]) -> Result<Pla
             }
             continue;
         }
-        let have = scan(&live)?;
+        let have = scan_with(&live, trust)?;
         fp.disk_bytes = have.values().map(|(_, n)| n).sum();
         let want = m.folders.get(folder).unwrap_or(&empty);
         for (rel, f) in want {
@@ -360,10 +390,24 @@ pub fn make_plan(layout: &Layout, m: &Manifest, wanted: &[String]) -> Result<Pla
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Progress {
-    /// "download" | "stage" | "swap" | "done"
+    /// "download" | "stage" | "backup" | "swap" | "done"
     pub step: &'static str,
     pub done: u64,
     pub total: u64,
+    /// the folder this event is about (download: the object just fetched; stage: the folder being built)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// that folder's own count so far: compressed bytes fetched (download) or files staged (stage)
+    pub folder_done: u64,
+    /// what that count runs to in this update: the folder's compressed bytes to fetch (0: all of it was cached
+    /// already) or its files to stage. The download's first events give every folder's, before anything is fetched.
+    pub folder_total: u64,
+}
+
+impl Progress {
+    pub fn step(step: &'static str, done: u64, total: u64) -> Self {
+        Progress { step, done, total, folder: None, folder_done: 0, folder_total: 0 }
+    }
 }
 
 pub type ProgressFn = Arc<dyn Fn(Progress) + Send + Sync>;
@@ -402,26 +446,41 @@ fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
 async fn download(layout: &Layout, src: &Source, plan: &Plan, progress: &ProgressFn) -> Result<()> {
     let cache = layout.cache();
     fs::create_dir_all(&cache)?;
-    let mut todo: Vec<FileEntry> = vec![];
-    for (_, _, f) in &plan.fetch {
-        if !cache.join(&f.sha256).is_file() && !todo.iter().any(|t| t.sha256 == f.sha256) {
-            todo.push(f.clone());
+    // (an object two folders share is fetched once, and counts for the first of them)
+    let mut todo: Vec<(String, FileEntry)> = vec![];
+    for (folder, _, f) in &plan.fetch {
+        if !cache.join(&f.sha256).is_file() && !todo.iter().any(|(_, t)| t.sha256 == f.sha256) {
+            todo.push((folder.clone(), f.clone()));
         }
     }
-    let total: u64 = todo.iter().map(|f| f.gz).sum();
+    let total: u64 = todo.iter().map(|(_, f)| f.gz).sum();
     let done = Arc::new(AtomicU64::new(0));
-    progress(Progress { step: "download", done: 0, total });
+    let mut of: BTreeMap<String, u64> = plan.put().into_iter().map(|f| (f, 0)).collect();
+    for (folder, f) in &todo {
+        *of.entry(folder.clone()).or_default() += f.gz;
+    }
+    let of = Arc::new(of);
+    let per_folder: Arc<BTreeMap<String, AtomicU64>> =
+        Arc::new(todo.iter().map(|(folder, _)| (folder.clone(), AtomicU64::new(0))).collect());
+    progress(Progress::step("download", 0, total));
+    for (folder, t) in of.iter() {
+        progress(Progress { step: "download", done: 0, total, folder: Some(folder.clone()), folder_done: 0, folder_total: *t });
+    }
     let results: Vec<Result<()>> = stream::iter(todo)
-        .map(|f| {
+        .map(|(folder, f)| {
             let cache = cache.clone();
             let done = done.clone();
+            let per_folder = per_folder.clone();
+            let of = of.clone();
             let progress = progress.clone();
             async move {
                 let gz = src.get(&object_path(&f.sha256), false).await?;
                 let data = unpack(&gz, &f)?;
                 write_atomic(&cache.join(&f.sha256), &data)?;
                 let d = done.fetch_add(f.gz, Ordering::SeqCst) + f.gz;
-                progress(Progress { step: "download", done: d, total });
+                let fd = per_folder[&folder].fetch_add(f.gz, Ordering::SeqCst) + f.gz;
+                let ft = of[&folder];
+                progress(Progress { step: "download", done: d, total, folder: Some(folder), folder_done: fd, folder_total: ft });
                 Ok(())
             }
         })
@@ -450,7 +509,9 @@ fn stage(layout: &Layout, m: &Manifest, plan: &Plan, progress: &ProgressFn) -> R
         plan.fetch.iter().map(|(a, b, _)| (a.as_str(), b.as_str())).collect();
     for folder in &put {
         fs::create_dir_all(root.join(folder))?;
-        for (rel, f) in m.folders.get(folder).unwrap_or(&empty) {
+        let files = m.folders.get(folder).unwrap_or(&empty);
+        let mut in_folder = 0u64;
+        for (rel, f) in files {
             let target = root.join(folder).join(rel);
             fs::create_dir_all(target.parent().unwrap())?;
             let from = if fetched.contains(&(folder.as_str(), rel.as_str())) {
@@ -464,8 +525,16 @@ fn stage(layout: &Layout, m: &Manifest, plan: &Plan, progress: &ProgressFn) -> R
                 return msg(format!("{folder}/{rel} changed while updating: try again"));
             }
             n += 1;
-            if n % 25 == 0 || n == total {
-                progress(Progress { step: "stage", done: n, total });
+            in_folder += 1;
+            if n % 25 == 0 || n == total || in_folder == files.len() as u64 {
+                progress(Progress {
+                    step: "stage",
+                    done: n,
+                    total,
+                    folder: Some(folder.clone()),
+                    folder_done: in_folder,
+                    folder_total: files.len() as u64,
+                });
             }
         }
     }
@@ -532,7 +601,7 @@ pub struct BackupInfo {
     pub version: Option<String>,
     pub build: Option<String>,
     pub time: String,
-    /// why it was made: "update" | "restore" | "remove"
+    /// why it was made: "update" | "restore" | "remove" | "manual" (Back up now)
     pub reason: String,
     #[serde(default)]
     pub saved_variables: usize,
@@ -582,12 +651,21 @@ fn swap_in(
     drop: &[String],
     reason: &str,
     keep: usize,
+    progress: Option<&ProgressFn>,
 ) -> Result<Option<String>> {
+    let tell = |step: &'static str| {
+        if let Some(p) = progress {
+            p(Progress::step(step, 0, 1));
+        }
+    };
     let before = installed(layout);
     let id = backup_id(layout, before.version.as_deref().unwrap_or("none"));
     let bdir = layout.backups().join(&id);
     fs::create_dir_all(&bdir)?;
+    tell("backup");
     let sv = backup_saved_variables(layout, &bdir)?;
+    // (the old folders move into the backup as the new ones move in: one step)
+    tell("swap");
     fs::create_dir_all(layout.addons())?;
 
     let mut moved_out: Vec<String> = vec![];
@@ -683,6 +761,15 @@ pub fn list_backups(layout: &Layout) -> Vec<BackupInfo> {
     out
 }
 
+/// Backups > the trash can: one backup goes for good (only an id the list shows: nothing outside backups/).
+pub fn delete_backup(layout: &Layout, id: &str) -> Result<()> {
+    if !list_backups(layout).iter().any(|b| b.id == id) {
+        return msg("that backup is not there any more");
+    }
+    fs::remove_dir_all(layout.backups().join(id))?;
+    Ok(())
+}
+
 fn prune_backups(layout: &Layout, keep: usize) -> Result<()> {
     for old in list_backups(layout).into_iter().skip(keep.max(1)) {
         fs::remove_dir_all(layout.backups().join(&old.id))?;
@@ -746,10 +833,9 @@ pub async fn update(
     }
     download(layout, src, &plan, &progress).await?;
     let staged = stage(layout, m, &plan, &progress)?;
-    progress(Progress { step: "swap", done: 0, total: 1 });
-    let backup = swap_in(layout, Some(&staged), &plan.put(), &plan.dropped(), "update", keep)?;
+    let backup = swap_in(layout, Some(&staged), &plan.put(), &plan.dropped(), "update", keep, Some(&progress))?;
     let _ = fs::remove_dir_all(layout.cache());
-    progress(Progress { step: "done", done: 1, total: 1 });
+    progress(Progress::step("done", 1, 1));
     Ok(Outcome {
         version: m.version.clone(),
         downloaded: plan.download_bytes,
@@ -769,7 +855,59 @@ pub fn remove(layout: &Layout, folder: &str, keep: usize) -> Result<Option<Strin
     if fs::symlink_metadata(layout.addons().join(folder)).is_err() {
         return Ok(None);
     }
-    swap_in(layout, None, &[], &[folder.to_string()], "remove", keep)
+    swap_in(layout, None, &[], &[folder.to_string()], "remove", keep, None)
+}
+
+/// Backups > Back up now: copies of the release folders in AddOns and of the DisasterZone saved variables, as a backup
+/// of its own (reason "manual"). Nothing in AddOns moves, so the game can be running. A linked folder (a development
+/// copy: its files live in the dev kit) is left out; with every folder linked it keeps the saved variables alone.
+/// Restoring it puts the folders back as they were now (restore applies the newer backups first).
+pub fn backup_now(layout: &Layout, keep: usize) -> Result<String> {
+    let before = installed(layout);
+    let id = backup_id(layout, before.version.as_deref().unwrap_or("none"));
+    let bdir = layout.backups().join(&id);
+    fs::create_dir_all(&bdir)?;
+    let made = (|| -> Result<BackupInfo> {
+        let sv = backup_saved_variables(layout, &bdir)?;
+        let mut names: Vec<String> = fs::read_dir(layout.addons())
+            .map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| release_folder(n)).collect())
+            .unwrap_or_default();
+        names.sort();
+        let mut folders = vec![];
+        for name in names {
+            let live = layout.addons().join(&name);
+            if is_link(&live) || !live.is_dir() {
+                continue;
+            }
+            copy_tree(&live, &bdir.join(&name))?;
+            folders.push(name);
+        }
+        if folders.is_empty() && sv == 0 {
+            return msg("there is nothing to back up yet: no DisasterZone folder and no saved variables");
+        }
+        Ok(BackupInfo {
+            id: id.clone(),
+            version: before.version.clone(),
+            build: before.build.clone(),
+            time: stamp(),
+            reason: "manual".into(),
+            saved_variables: sv,
+            bytes: folders.iter().map(|f| dir_bytes(&bdir.join(f))).sum(),
+            folders,
+            added: vec![],
+        })
+    })();
+    match made {
+        Ok(info) => {
+            fs::write(bdir.join("backup.json"), serde_json::to_vec_pretty(&info).unwrap())?;
+            prune_backups(layout, keep)?;
+            Ok(id)
+        }
+        Err(e) => {
+            let _ = fs::remove_dir_all(&bdir);
+            Err(e)
+        }
+    }
 }
 
 /// Go back to how the addon folders were before backup `id` was made. Every backup from the newest down to `id` is
@@ -818,7 +956,7 @@ pub fn restore(layout: &Layout, id: &str, keep: usize) -> Result<Option<String>>
         }
     }
     // keep the backups just restored: the new one would otherwise push the oldest of them out
-    swap_in(layout, Some(&staged), &put, &drop, "restore", (keep + 1).max(pos + 2))
+    swap_in(layout, Some(&staged), &put, &drop, "restore", (keep + 1).max(pos + 2), None)
 }
 
 #[cfg(test)]
@@ -973,6 +1111,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn each_folder_counts_to_its_own_total() {
+        let mut fx = Fixture::new();
+        let m = fx.publish("1.0", "b1", &[("Core/A.lua", "a1"), ("Core/B.lua", "b1")],
+            &[(ROOMS, ROOMS_FILES), ("DisasterZone_Chess", &[("Chess/A.lua", "c1"), ("Chess/B.lua", "c2")])]);
+        // the 3D rooms' objects are in the cache already (an update that stopped half way): nothing to fetch there
+        fs::create_dir_all(fx.layout.cache()).unwrap();
+        for f in m.folders[ROOMS].values() {
+            let z = fs::read(fx.pub_dir.join(object_path(&f.sha256))).unwrap();
+            let mut data = vec![];
+            flate2::read::GzDecoder::new(&z[..]).read_to_end(&mut data).unwrap();
+            fs::write(fx.layout.cache().join(&f.sha256), data).unwrap();
+        }
+        let seen: Arc<std::sync::Mutex<Vec<Progress>>> = Arc::default();
+        let log = seen.clone();
+        let choice: BTreeMap<String, bool> = [("chess".to_string(), true)].into();
+        update(&fx.layout, &fx.src(), &m, &wanted(&fx.layout, &m, &choice), 3, Arc::new(move |p| log.lock().unwrap().push(p)))
+            .await
+            .unwrap();
+        let seen = seen.lock().unwrap();
+        let dl: Vec<&Progress> = seen.iter().filter(|p| p.step == "download" && p.folder.is_some()).collect();
+        // every folder's total comes first, before a byte is fetched
+        let firsts: Vec<(&str, u64)> =
+            dl.iter().take_while(|p| p.folder_done == 0).map(|p| (p.folder.as_deref().unwrap(), p.folder_total)).collect();
+        assert_eq!(firsts.iter().map(|x| x.0).collect::<Vec<_>>(), vec!["DisasterZone", "DisasterZone_Chess", ROOMS]);
+        assert_eq!(firsts[2].1, 0);
+        for p in &dl {
+            assert!(p.folder_done <= p.folder_total, "{p:?}");
+        }
+        for (folder, total) in &firsts[..2] {
+            let last = dl.iter().rev().find(|p| p.folder.as_deref() == Some(*folder)).unwrap();
+            assert_eq!(last.folder_done, *total);
+            assert!(*total > 0);
+        }
+        let st: Vec<&Progress> = seen.iter().filter(|p| p.step == "stage").collect();
+        for p in &st {
+            assert!(p.folder_done <= p.folder_total, "{p:?}");
+        }
+        let chess = st.iter().rev().find(|p| p.folder.as_deref() == Some("DisasterZone_Chess")).unwrap();
+        assert_eq!((chess.folder_done, chess.folder_total), (3, 3)); // its TOC and two files
+    }
+
+    #[tokio::test]
     async fn a_bad_object_changes_nothing() {
         let mut fx = Fixture::new();
         let m = fx.publish("1.0", "b1", &[("Core/A.lua", "a1")], &[]);
@@ -1071,6 +1251,102 @@ mod tests {
         assert!(restore(&fx.layout, &all[2].id, 3).unwrap_err().to_string().contains("before DisasterZone was installed"));
         assert!(restore(&fx.layout, "../x", 3).is_err());
         assert!(restore(&fx.layout, "nope", 3).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_manual_backup_copies_and_restores_like_the_others() {
+        let mut fx = Fixture::new();
+        let sv = fx.layout.wtf().join("Account/ME/SavedVariables");
+        fs::create_dir_all(&sv).unwrap();
+        fs::write(sv.join("DisasterZone.lua"), "DisasterZoneDB = {}").unwrap();
+        let chess: Files = &[("Chess.lua", "c1")];
+        let m = fx.publish("1.0", "b1", &[("Core/A.lua", "a1")], &[(ROOMS, ROOMS_FILES), ("DisasterZone_Chess", chess)]);
+        fx.update_with(&m, &[("chess", true)], 5).await.unwrap();
+        fs::create_dir_all(fx.layout.addons().join("DisasterZone_Bridge")).unwrap(); // (the launcher's own: left out)
+
+        let id = backup_now(&fx.layout, 5).unwrap();
+        assert_eq!(fx.backup_dirs(&id), vec!["DisasterZone", "DisasterZone_Chess", "DisasterZone_Rooms", "WTF"]);
+        assert_eq!(fx.read("DisasterZone", "Core/A.lua").as_deref(), Some("a1")); // (copied: still in AddOns)
+        let b = &list_backups(&fx.layout)[0];
+        assert_eq!((b.id.as_str(), b.reason.as_str(), b.version.as_deref()), (id.as_str(), "manual", Some("1.0")));
+        assert_eq!(b.saved_variables, 1);
+        assert!(b.bytes > 0 && b.added.is_empty());
+
+        // 1.1 changes the core and chess; going back to the manual backup puts 1.0 back
+        let m2 = fx.publish("1.1", "b2", &[("Core/A.lua", "a2")], &[(ROOMS, ROOMS_FILES), ("DisasterZone_Chess", &[("Chess.lua", "c2")])]);
+        fx.update_with(&m2, &[], 5).await.unwrap();
+        assert_eq!(fx.read("DisasterZone_Chess", "Chess.lua").as_deref(), Some("c2"));
+        restore(&fx.layout, &id, 5).unwrap();
+        assert_eq!(fx.read("DisasterZone", "Core/A.lua").as_deref(), Some("a1"));
+        assert_eq!(fx.read("DisasterZone_Chess", "Chess.lua").as_deref(), Some("c1"));
+        assert_eq!(installed(&fx.layout).version.as_deref(), Some("1.0"));
+    }
+
+    #[tokio::test]
+    async fn a_manual_backup_counts_toward_the_ones_kept() {
+        let mut fx = Fixture::new();
+        let m = fx.publish("1.0", "b1", &[("Core/A.lua", "a1")], &[]);
+        fx.update_with(&m, &[], 2).await.unwrap();
+        let first = backup_now(&fx.layout, 2).unwrap();
+        backup_now(&fx.layout, 2).unwrap();
+        backup_now(&fx.layout, 2).unwrap();
+        let all = list_backups(&fx.layout);
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().all(|b| b.id != first));
+    }
+
+    #[tokio::test]
+    async fn a_linked_folder_is_left_out_of_a_manual_backup() {
+        let fx = Fixture::new();
+        assert!(backup_now(&fx.layout, 3).unwrap_err().to_string().contains("nothing to back up"));
+        assert!(list_backups(&fx.layout).is_empty());
+        let src = fx._tmp.path().join("devkit");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("DisasterZone.toc"), "## Version: 9.9\n").unwrap();
+        if !link_dir(&src, &fx.layout.addons().join("DisasterZone")) {
+            eprintln!("could not make a directory link here: skipped");
+            return;
+        }
+        let sv = fx.layout.wtf().join("Account/ME/SavedVariables");
+        fs::create_dir_all(&sv).unwrap();
+        fs::write(sv.join("DisasterZone.lua"), "DisasterZoneDB = {}").unwrap();
+        let id = backup_now(&fx.layout, 3).unwrap();
+        assert_eq!(fx.backup_dirs(&id), vec!["WTF"]);
+        let b = &list_backups(&fx.layout)[0];
+        assert!(b.folders.is_empty() && b.saved_variables == 1, "{b:?}");
+        assert!(src.join("DisasterZone.toc").is_file());
+    }
+
+    #[tokio::test]
+    async fn a_check_reads_only_files_that_changed() {
+        let mut fx = Fixture::new();
+        let m = fx.publish("1.0", "b1", &[("Core/A.lua", "a1"), ("Core/B.lua", "b1")], &[]);
+        fx.update_with(&m, &[], 3).await.unwrap();
+        let want = wanted(&fx.layout, &m, &BTreeMap::new());
+        assert!(check_plan(&fx.layout, &m, &want).unwrap().up_to_date);
+        // a file changed behind the launcher's back (same length, new time): the check still sees it
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(fx.layout.addons().join("DisasterZone/Core/A.lua"), "zz").unwrap();
+        let plan = check_plan(&fx.layout, &m, &want).unwrap();
+        assert_eq!(plan.fetch.iter().map(|(_, r, _)| r.as_str()).collect::<Vec<_>>(), vec!["Core/A.lua"]);
+        // the remembered hash is the file's own, not the release's: put back, it matches again
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(fx.layout.addons().join("DisasterZone/Core/A.lua"), "a1").unwrap();
+        assert!(check_plan(&fx.layout, &m, &want).unwrap().up_to_date);
+    }
+
+    #[tokio::test]
+    async fn a_backup_can_be_deleted_and_nothing_else() {
+        let mut fx = Fixture::new();
+        let m = fx.publish("1.0", "b1", &[("Core/A.lua", "a1")], &[]);
+        fx.update_with(&m, &[], 3).await.unwrap();
+        let id = backup_now(&fx.layout, 3).unwrap();
+        assert!(delete_backup(&fx.layout, "..").is_err());
+        assert!(delete_backup(&fx.layout, "../../Interface").is_err());
+        delete_backup(&fx.layout, &id).unwrap();
+        assert!(list_backups(&fx.layout).is_empty());
+        assert!(delete_backup(&fx.layout, &id).unwrap_err().to_string().contains("not there"));
+        assert_eq!(fx.read("DisasterZone", "Core/A.lua").as_deref(), Some("a1"));
     }
 
     #[tokio::test]
