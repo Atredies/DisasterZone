@@ -735,6 +735,18 @@ local function OnGuildCouncil(sender, msg, dist)
         if stored and not IsTofu(stored) then
             vouched = stored.members[sender] and roster[sender] and true or false
             src = "relay"
+            -- 2026-11-09 (authority holes, round 3): the list is the GM's alone, like the GMR record. A council member
+            -- could relay a rewritten list "by the GM" with a newer rev, and it stood until the GM's own copy came. A
+            -- relay now only confirms the list I hold (the same rev and names, below); a newer one is held back: the
+            -- GM is asked for theirs (online now, or when their HELLO shows the rev, Guild:OnCouncilRevSeen).
+            if vouched and v.rev > stored.rev then
+                ns:Debug("Guild: relayed CG rev %d from %s held back (only the GM's own copy changes the list)", v.rev,
+                    tostring(sender))
+                if gmKey and roster[gmKey] and roster[gmKey].online and RateLimit("cq-gm:" .. gmKey, CQ_REPLY_LIMIT) then
+                    SendCQ("WHISPER", gmKey)
+                end
+                return
+            end
         else
             vouched = v.members[sender] and true or false
             src = "tofu"
