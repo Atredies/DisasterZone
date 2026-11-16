@@ -519,6 +519,23 @@ function Util.Time(fields)
     return time(fields) + Util.ClockShift()
 end
 
+-- Opens a whisper to `key` ("Name-Realm") in the chat box, with `text` typed in (optional): the one way every whisper
+-- button starts one. Blizzard's SendTell sets the whole "/w Name text" line and parses it at once, where typing it in
+-- with OpenChat parses at the first space. Returns ok.
+function Util.Whisper(key, text)
+    if type(key) ~= "string" or key == "" then return false end
+    local name = (Ambiguate and Ambiguate(key, "none")) or Util.ShortName(key) or key
+    text = text or ""
+    local CFU = ChatFrameUtil
+    if CFU and CFU.SendTellWithMessage then CFU.SendTellWithMessage(name, text) return true end
+    if text == "" and CFU and CFU.SendTell then CFU.SendTell(name) return true end
+    if text == "" and ChatFrame_SendTell then ChatFrame_SendTell(name) return true end
+    local open = (CFU and CFU.OpenChat) or ChatFrame_OpenChat
+    if not open then return false end
+    open("/w " .. name .. " " .. text)
+    return true
+end
+
 -- "Server time" / "Local time": the clock raid times are shown in.
 function Util.ClockName()
     return Util.ServerClock() and "Server time" or "Local time"
