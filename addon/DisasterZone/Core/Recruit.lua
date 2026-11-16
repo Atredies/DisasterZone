@@ -13,7 +13,8 @@ if DisasterZoneBoot and DisasterZoneBoot.Run("Core/Recruit.lua", ...) then retur
 -- short time text), sd (their words), tg (tags), fu = { at, t } (the follow-up: a day and what), n = { { by, at, t } }
 -- (notes, newest first), lv / la (level last seen, when), ja / jl / jb / tm (joined at, level then, invited by, team),
 -- ck (check-ins done), ms (milestones reached), nn (Not now since), ak (their other characters the record was on
--- before: Move to another character, 1.5.5), rev, by (last writer), at (added).
+-- before: Move to another character, 1.5.5), rev, by (last writer), at (added). rb (2026-11-09, local, never sent; on
+-- a person, a note or a removal): the recruiter who passed it on when its writer did not send it (H.MarkRelayed).
 --
 -- Messages (WHISPER between recruiters only, class "data"; the OfficerNotes model):
 --   RC  { k, r = person, v = rev }   one person, sent to the recruiters online on every change
@@ -382,6 +383,10 @@ function H.Save(key, r)
     r.by = Me()
     local clean = Recruit:Clean(r)
     if not clean then return false, "not a valid person" end
+    -- (the notes I had keep who passed them on: H.MarkRelayed)
+    local had = {}
+    for _, n in ipairs(old and old.n or {}) do if n.rb then had[n.by .. "\31" .. n.at .. "\31" .. n.t] = n.rb end end
+    for _, n in ipairs(clean.n or {}) do n.rb = had[n.by .. "\31" .. n.at .. "\31" .. n.t] end
     b.p[key] = clean
     b.x[key] = nil
     if not H.Pretending() then
@@ -735,13 +740,47 @@ function H.OnPerson(sender, msg, dist)
     local x = b.x[key]
     if x and x.rev >= r.rev then return end
     local old = b.p[key]
+    local first = H.FromWriter(r.by, sender)
     if old then
         if old.rev > r.rev then return end
+        if old.rev == r.rev and H.Digest(old) == H.Digest(r) and first and old.rb then
+            -- (the same version from its writer: who passed it on before no longer matters)
+            old.rb = nil
+            for _, n in ipairs(old.n or {}) do if H.FromWriter(n.by, sender) then n.rb = nil end end
+            ns:Fire("RECRUIT_UPDATED", key)
+            return
+        end
         if old.rev == r.rev and H.Digest(old) >= H.Digest(r) then return end
     end
+    H.MarkRelayed(r, old, sender, first)
     b.p[key] = r
     b.x[key] = nil
     ns:Fire("RECRUIT_UPDATED", key)
+end
+
+-- 2026-11-09 (authority holes, round 2): the names in a record (its last writer by, each note's by) are the sender's
+-- word. Did `key` send it themselves (a character of theirs)?
+function H.FromWriter(key, sender)
+    if type(key) ~= "string" then return false end
+    if key == sender then return true end
+    local G = Guild()
+    return (G and G.SameAccount and G:SameAccount(key, sender)) and true or false
+end
+
+-- A version from someone else than its writer keeps who passed it on (rb, local, never sent: Clean drops it); so does
+-- each note new to me that its writer did not send me. A note I had keeps the mark it had.
+function H.MarkRelayed(r, old, sender, first)
+    r.rb = not first and sender or nil
+    local had = {}
+    for _, n in ipairs(old and old.n or {}) do had[n.by .. "\31" .. n.at .. "\31" .. n.t] = n end
+    for _, n in ipairs(r.n or {}) do
+        local o = had[n.by .. "\31" .. n.at .. "\31" .. n.t]
+        if o then
+            n.rb = o.rb
+        elseif not H.FromWriter(n.by, sender) then
+            n.rb = sender
+        end
+    end
 end
 
 function H.OnRemove(sender, msg, dist)
@@ -751,9 +790,17 @@ function H.OnRemove(sender, msg, dist)
     local b = H.Store(true)
     if not b then return end
     local old, x = b.p[key], b.x[key]
+    local by = H.WireKey(msg.by) or sender
+    -- (who removed them is the sender's word: from anyone else, kept with who passed it on, rb; the same removal
+    -- from its writer later clears that)
+    local first = H.FromWriter(by, sender)
+    if x and x.rev == msg.v and x.by == by and x.rb and first then
+        x.rb = nil
+        return
+    end
     if (old and old.rev >= msg.v) or (x and x.rev >= msg.v) then return end
     b.p[key] = nil
-    b.x[key] = { rev = msg.v, by = H.WireKey(msg.by) or sender }
+    b.x[key] = { rev = msg.v, by = by, rb = not first and sender or nil }
     ns:Fire("RECRUIT_UPDATED", key)
 end
 

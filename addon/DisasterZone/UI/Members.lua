@@ -1368,7 +1368,8 @@ local function updateNote(right, member)
     note.key = member
     local day = (date("%d %b", rec.rev):gsub("^0", ""))
     note.head:SetCount(notes:IsLocalOnly() and S:Wrap("WARN", "debug role: test notes, kept on this PC only")
-        or ("%s · %s"):format(rec.by and ns.Util.ShortName(rec.by) or "?", day))
+        or ("%s · %s%s"):format(rec.by and ns.Util.ShortName(rec.by) or "?", day,
+            rec.via and (" · relayed by " .. ns.Util.ShortName(rec.via)) or ""))
     local tw = cardWidth() - 2 * S.IN - 4
     note.text:SetWidth(tw)
     note.text:SetText(rec.text)

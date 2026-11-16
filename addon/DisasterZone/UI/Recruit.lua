@@ -479,7 +479,7 @@ end
 -- The story: notes, the introduction, raids with us (the guest book), milestones, joined, how we met; newest first.
 function H.Story(r)
     local out = {}
-    for _, n in ipairs(r.n or {}) do out[#out + 1] = { kind = "note", by = n.by, at = n.at, t = n.t } end
+    for _, n in ipairs(r.n or {}) do out[#out + 1] = { kind = "note", by = n.by, at = n.at, t = n.t, rb = n.rb } end
     if r.ib and r.it then out[#out + 1] = { kind = "intro", by = r.ib, at = r.at or r.rev, t = r.it } end
     local GB = ns.GuestBook
     local e = GB and GB.GetEntry and GB:GetEntry(r.key)
@@ -556,7 +556,9 @@ function H.FillStory(s, r, maxH)
             UI:ClassIcon(it.face, UI:ClassOf(e.by) or "PRIEST")
             if e.kind == "intro" then it.text:SetTextColor(0.96, 0.92, 0.80) else it.text:SetTextColor(S:RGB("TEXT")) end
             it.text:SetText(e.kind == "intro" and ("\"" .. e.t .. "\"") or e.t)
-            it.sub:SetText(Name(e.by) .. S:Wrap("DIM", (e.kind == "intro" and " introduced them" or "") .. " · " .. date("%a %d %b", e.at)))
+            -- (rb: passed on by another recruiter, not by its writer: the name is their word, Core/Recruit.lua)
+            it.sub:SetText(Name(e.by) .. S:Wrap("DIM", (e.kind == "intro" and " introduced them" or "") .. " · " .. date("%a %d %b", e.at)
+                .. (e.rb and (" · relayed by " .. Short(e.rb)) or "")))
         elseif e.kind == "run" then
             it.art:Show()
             H.Art(e.inst)(it.art, 40, 22)
