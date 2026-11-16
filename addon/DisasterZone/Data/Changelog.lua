@@ -6,6 +6,44 @@ if DisasterZoneBoot and DisasterZoneBoot.Run("Data/Changelog.lua", ...) then ret
 local addonName, ns = ...
 
 ns.CHANGELOG = {
+    { version = "1.6.0", date = "16 November 2026", title = "New home, raid times your way, and a safer guild sync",
+      sections = {
+          { heading = "DisasterZone has a new home", area = "other", kind = "changed", hi = true, open = "settings",
+            lead = "Tsumil made DisasterZone and handed it on: Arakis looks after it from 1.6.0.", lines = {
+              "Thank you, Tsumil, for everything you built for the guild.",
+              "Downloads and updates now come from github.com/Atredies/DisasterZone.",
+              "/dz download (or Settings > About > Copy link) gives you the link to paste to anyone.",
+              "Your raids, lists, loot history and settings carry over as they are.",
+              "Feedback and error reports now go to Arakis.",
+          } },
+          { heading = "Raid times", area = "raids", kind = "new", hi = true,
+            lead = "Show raid days and times in server time or your own clock.", lines = {
+              "The Local | Server switch is on the Home calendar, the Raids tab and Settings.",
+              "Hover it to see both clocks' time now.",
+              "A busy calendar day turns in pages: the arrows by its title, or the mouse wheel.",
+          } },
+          { heading = "Council Bingo", area = "games", kind = "new", lines = {
+              "Click a raider in the race to see their card; My card takes you back.",
+          } },
+          { heading = "Recruitment", area = "guild", kind = "new", ["for"] = "gm officers", lines = {
+              "Recruiters share the recruitment messages, and every place picks its own.",
+              "Whispers within 2 hours of a post add the player to People > Talking.",
+          } },
+          { heading = "Guild sync", area = "fixes", kind = "fixed", hi = true,
+            lead = "Guild data is checked harder before it is taken, and less of it goes missing.", lines = {
+              "Only the people allowed to change raids, rules, reserves and notes can change them.",
+              "A drop is no longer counted twice, and an open roll survives a /reload.",
+              "Event sign-ups made while you were offline arrive when you log in.",
+              "When you log in, you learn which version everyone online runs.",
+              "Answering a locked raid in Discord asks the raid leader to let you join, as in game.",
+              "Chess ladder results are only taken from the guildmate you asked.",
+              "Keyboard shortcuts no longer misfire when a fight starts.",
+          } },
+          { heading = "Updates", area = "other", kind = "new", lines = {
+              "/dz update checks for an in-game update now and says what it found.",
+              "In-game updates are signed with a new key; old ones are refused.",
+          } },
+      } },
     { version = "1.5.5", date = "17 October 2026", title = "Hold the Line, Naxxramas and fixes from the raid",
       sections = {
           { heading = "Hold the Line", area = "games", kind = "new", hi = true, open = "games",
