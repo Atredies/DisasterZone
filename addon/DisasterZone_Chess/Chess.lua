@@ -533,7 +533,12 @@ local function Merge(g, ms, result, reason)
         end
     end
     if g.status ~= "over" then
-        if (result == "1-0" or result == "0-1" or result == "1/2-1/2") and (reason == "resign" or reason == "agreed") then
+        -- A result from the wire ends my game only when it is theirs to give (2026-11-12: any "resign" or "agreed"
+        -- was taken, so the opponent could end my game as my resignation): their resignation (a win for me), or a
+        -- draw I offered (they accepted; the CHD may have been missed). Anything else: the moves decide.
+        local myWin = g.me == 1 and "1-0" or "0-1"
+        if (reason == "resign" and result == myWin)
+            or (reason == "agreed" and result == "1/2-1/2" and g.drawFrom == Me()) then
             Finish(g, result, reason)
         else
             CheckEnd(g)
@@ -732,9 +737,15 @@ function Chess:Record(g)
 end
 
 handlers.CHL = function(sender, msg)
-    -- (only one of the two players may report a game)
+    -- (only one of the two players may report a game, and only as their loss or a draw: a player can concede, not
+    -- claim; 2026-11-12: a made-up win over anyone was taken. Both players' clients report every game they finish,
+    -- so the loser's report carries it; older clients send both as before. 2026-11-13: a draw too only from one of the
+    -- two players, else a bystander could forge draws between any two and move their ratings.)
     local function same(a, b) return Util.NormalizeName and Util.NormalizeName(a) == Util.NormalizeName(b) or a == b end
-    if not (same(sender, msg.w) or same(sender, msg.b)) then return end
+    local isW, isB = same(sender, msg.w), same(sender, msg.b)
+    if not (isW or isB) then return end
+    local concedes = msg.r == "1/2-1/2" or (isW and msg.r == "0-1") or (isB and msg.r == "1-0")
+    if not concedes then return end
     if AddResult(msg.id, msg) then Changed(nil, "ladder") end
 end
 
@@ -750,6 +761,8 @@ function Chess:Digest()
     return n, s
 end
 
+local LADDER_ANSWER_TIME = 120      -- seconds a CHY asked stays open for its CHZ answers
+
 handlers.CHQ = function(sender, msg)
     local n, s = Chess:Digest()
     if n > (tonumber(msg.n) or 0) or (n == tonumber(msg.n) and s ~= tonumber(msg.s)) then
@@ -761,6 +774,8 @@ handlers.CHN = function(sender, msg)
     -- the first who has more is asked for theirs (once a session)
     if Chess.askedLadder or (tonumber(msg.n) or 0) <= (Chess:Digest()) then return end
     Chess.askedLadder = true
+    -- (only the one asked may answer, for a short while: CHZ from anyone else is ignored)
+    Chess.ladderFrom, Chess.ladderUntil = sender, GetTime() + LADDER_ANSWER_TIME
     Chess:Whisper(sender, { t = "CHY" })
 end
 
@@ -776,7 +791,10 @@ handlers.CHY = function(sender)
     end
 end
 
-handlers.CHZ = function(_, msg)
+-- The results of the one I asked with CHY (a forged list whispered by anyone else, or long after, is ignored).
+-- Residual risk, accepted (2026-11-15): the one asked could lie; the ladder is for fun.
+handlers.CHZ = function(sender, msg)
+    if sender ~= Chess.ladderFrom or GetTime() > (Chess.ladderUntil or 0) then return end
     local added = false
     for _, e in ipairs(type(msg.list) == "table" and msg.list or {}) do
         if type(e) == "table" and AddResult(e[1], { w = e[2], b = e[3], r = e[4], at = e[5], n = e[6] }) then

@@ -413,7 +413,8 @@ end
 --   10 pd  raid plans (RaidPlan, Addendum J §56)    20 blr  the raid blacklist (RaidPlan)
 --   30 gnr the guest book's notes (GuestBook, 1.3)   40 sd   strategies + assignments (Strategy, Addendum K)
 --   50 ed  events (1.3.2)    60 od  polls (1.3.4)    70 zd   prized items (1.3.5)
---   80 rlr the raid leaders list (Guild, Addendum J §62)   90 av  accounts (Guild, 1.2)
+--   80 rlr the raid leaders list (Guild, Addendum J §62)   82 gmr the GM's rules (Guild)
+--   90 av  accounts (Guild, 1.2)
 -- (Older clients ignore a field they don't know.) Registering a field again replaces it.
 function Sync:RegisterHelloField(field, order, send, seen)
     if type(field) ~= "string" then return end
@@ -766,6 +767,16 @@ local function QueueState(sender)
     ScheduleStates()
 end
 
+-- My version, whispered to somebody whose login (or /reload) HELLO I just heard: their copy only learns versions from
+-- HELLOs, and mine went out before they came online, so their roster kept the version it saved earlier. Once per
+-- session of theirs, a few seconds later (a login wave's whispers spread out); older copies ignore the "V".
+local function SendVersionTo(sender, session)
+    if not (RateLimit("Hv:" .. session, 3600) and RateLimit("Hvx:" .. sender, 10)) then return end
+    Util.After(1 + random() * 5, function()
+        Send({ t = "V", v = ns.version }, "WHISPER", sender, "ctrl")
+    end)
+end
+
 ---------------------------------------------------------------------------
 -- Message handlers (sender = transport-verified name key)
 ---------------------------------------------------------------------------
@@ -785,6 +796,10 @@ local function OnHello(sender, msg, dist)
     -- the short per-sender cap bounds what a spammer with changing nonces can trigger.
     local n = msg.n
     local session = sender .. ":" .. ((type(n) == "number" and n == floor(n)) and tostring(n) or "")
+    -- (only to a real client's HELLO: it always carries its session number and version; a forged one gets nothing)
+    if type(n) == "number" and n == floor(n) and type(msg.v) == "string" and #msg.v <= 24 then
+        SendVersionTo(sender, session)
+    end
 
     if amCouncil and RateLimit("Hx:" .. sender, 5) and RateLimit("Hs:" .. session, REPLY_RATE) then
         QueueState(sender)
@@ -810,6 +825,14 @@ local function OnHello(sender, msg, dist)
     if type(msg.rd) == "table" and not (msg.c and FullPair(sender)) and RL and RL.OnPlannerHello then
         RL:OnPlannerHello(sender, type(msg.rd2) == "table" and msg.rd2 or msg.rd)
     end
+end
+
+-- A guild member's version, whispered back after my HELLO (SendVersionTo).
+local function OnVersion(sender, msg, dist)
+    if dist ~= "WHISPER" or type(msg.v) ~= "string" or #msg.v > 24 then return end
+    local Guild = ns.Guild
+    if not (Guild and Guild.IsInGuild and Guild:IsInGuild(sender, true)) then return end
+    MarkSeen(sender, msg.v, nil)
 end
 
 local function OnState(sender, msg, dist)
@@ -1044,6 +1067,7 @@ function Sync:OnInit()
     if Comm then
         Comm:Register("H", OnHello)
         Comm:Register("S", OnState)
+        Comm:Register("V", OnVersion)
         Comm:Register("M", OnManifest)
         Comm:Register("W", OnWant)
         Comm:Register("L", OnList)

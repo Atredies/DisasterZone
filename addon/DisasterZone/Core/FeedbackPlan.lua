@@ -489,13 +489,25 @@ local function PublishSoon()
 end
 Plan.PublishSoon = PublishSoon
 
+-- 2026-11-09 (authority holes 4): the plan and Coming next are the developer's. Their copy is taken (and replaces
+-- one another staff member passed on, whatever its rev); a copy another staff member passes on only while I hold
+-- none, or none but another passed-on one (marked: planVia / comingVia), so an officer can't rewrite the plan on
+-- the clients that have it from the developer.
+local function Takes(s, mine, rev, viaField, sender)
+    if F():IsDev(sender) then
+        return not mine or s[viaField] ~= nil or (tonumber(mine.rev) or 0) < rev
+    end
+    return not mine or (s[viaField] ~= nil and (tonumber(mine.rev) or 0) < rev)
+end
+
 local function OnPlan(sender, msg, dist)
     if dist ~= "WHISPER" or not F():IsStaff(sender) or F():AmIDev() then return end
     if not ValidPlan(msg.p) then return end
     local s = Store(true, true)
     local mine = s and GetPlan(false, true)
-    if not s or (mine and mine.rev >= msg.p.rev) then return end
+    if not s or not Takes(s, mine, msg.p.rev, "planVia", sender) then return end
     s.plan = msg.p
+    s.planVia = (not F():IsDev(sender)) and sender or nil
     Changed()
 end
 
@@ -504,8 +516,9 @@ local function OnComing(sender, msg, dist)
     if not ValidComing(msg.c) then return end
     local s = Store(true, true)
     local mine = GetComing(true)
-    if not s or (mine and (tonumber(mine.rev) or 0) >= msg.c.rev) then return end
+    if not s or not Takes(s, mine, msg.c.rev, "comingVia", sender) then return end
     s.coming = msg.c
+    s.comingVia = (not F():IsDev(sender)) and sender or nil
     Changed()
 end
 

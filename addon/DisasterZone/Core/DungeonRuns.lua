@@ -1209,13 +1209,18 @@ local function StoreRun(run)
     local gone = st.gone[run.id]
     if gone and (tonumber(gone) or 0) > Now() then return false end
     local cur = st.list[run.id]
+    -- 2026-11-09 (authority holes 4): a run never changes owner, and a copy its owner didn't send me (rb = who
+    -- passed it on, OnDigest) never replaces one I hold nor ends another run (pv); the owner's own copy of the same
+    -- revision replaces it.
+    if cur and cur.o ~= run.o then return false end
+    if run.rb and cur then return false end
     -- (a run whose roster a digest left out takes its whole roster at the same revision)
-    local completes = cur and cur.pt and not run.pt and (cur.rv or 0) == (run.rv or 0)
+    local completes = cur and (cur.pt or cur.rb) and not run.pt and not run.rb and (cur.rv or 0) == (run.rv or 0)
     if cur and (cur.rv or 0) >= (run.rv or 0) and not completes then return false end
     if Expired(run) then return false end
     local fresh = cur == nil
     st.list[run.id] = run
-    if run.pv then Renamed(run) end
+    if run.pv and not run.rb then Renamed(run) end
     if run.pt then GK.AskRoster(run) end
     Changed()
     MaybePing(run, fresh)
@@ -1486,7 +1491,20 @@ local function OnDigest(sender, msg)
     for _, w in ipairs(type(msg.l) == "table" and msg.l or {}) do
         if type(w) == "table" then
             local run = ParseRun(w, sender)
-            if run and run.o ~= Me() and InGuild(run.o) then StoreRun(run) end
+            -- the owner is who says so: a run of someone else than the sender is asked for from its owner when they
+            -- are online; an offline owner's (a run later today) is kept marked with who passed it on (rb), until
+            -- the owner's own profile or run says otherwise (StoreRun, OnProfile)
+            if run and run.o ~= Me() and InGuild(run.o) then
+                if run.o == sender then
+                    StoreRun(run)
+                elseif IsOnline(run.o) then
+                    local cur = State().list[run.id]
+                    if not (cur and cur.o == run.o and (cur.rv or 0) >= (run.rv or 0)) then GK.AskRoster(run) end
+                else
+                    run.rb = sender
+                    StoreRun(run)
+                end
+            end
         end
     end
     MergeDaily(msg.dy)

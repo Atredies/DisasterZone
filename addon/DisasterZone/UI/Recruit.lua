@@ -96,11 +96,7 @@ function H.Art(inst, grey)
     end
 end
 
-function H.Whisper(key)
-    local name = (Ambiguate and Ambiguate(key, "none")) or Short(key)
-    local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
-    if open then open("/w " .. name .. " ") end
-end
+function H.Whisper(key) ns.Util.Whisper(key) end
 
 function H.Try(ok, err)
     if not ok and err then ns:Print("%s", tostring(err)) end
@@ -483,7 +479,7 @@ end
 -- The story: notes, the introduction, raids with us (the guest book), milestones, joined, how we met; newest first.
 function H.Story(r)
     local out = {}
-    for _, n in ipairs(r.n or {}) do out[#out + 1] = { kind = "note", by = n.by, at = n.at, t = n.t } end
+    for _, n in ipairs(r.n or {}) do out[#out + 1] = { kind = "note", by = n.by, at = n.at, t = n.t, rb = n.rb } end
     if r.ib and r.it then out[#out + 1] = { kind = "intro", by = r.ib, at = r.at or r.rev, t = r.it } end
     local GB = ns.GuestBook
     local e = GB and GB.GetEntry and GB:GetEntry(r.key)
@@ -560,7 +556,9 @@ function H.FillStory(s, r, maxH)
             UI:ClassIcon(it.face, UI:ClassOf(e.by) or "PRIEST")
             if e.kind == "intro" then it.text:SetTextColor(0.96, 0.92, 0.80) else it.text:SetTextColor(S:RGB("TEXT")) end
             it.text:SetText(e.kind == "intro" and ("\"" .. e.t .. "\"") or e.t)
-            it.sub:SetText(Name(e.by) .. S:Wrap("DIM", (e.kind == "intro" and " introduced them" or "") .. " · " .. date("%a %d %b", e.at)))
+            -- (rb: passed on by another recruiter, not by its writer: the name is their word, Core/Recruit.lua)
+            it.sub:SetText(Name(e.by) .. S:Wrap("DIM", (e.kind == "intro" and " introduced them" or "") .. " · " .. date("%a %d %b", e.at)
+                .. (e.rb and (" · relayed by " .. Short(e.rb)) or "")))
         elseif e.kind == "run" then
             it.art:Show()
             H.Art(e.inst)(it.art, 40, 22)
@@ -818,7 +816,9 @@ function H.PartLabel(p)
         return "\"" .. M():Render(t, 12) .. "\""
     elseif p.k == "need" then return "Classes: " .. (p.teamName or "team gone")
     elseif p.k == "nights" then return "Nights: " .. (p.teamName or "team gone")
-    elseif p.k == "icon" then return M().ICONS[p.m or 1].name end
+    elseif p.k == "icon" then
+        return M().ICONS[p.m or 1].name .. " / " .. (p.tx or M().DEFAULT_MARKER)
+    end
     return p.label
 end
 
@@ -874,6 +874,12 @@ function H.PartMenu(owner, id)
             for _, ic in ipairs(M().ICONS) do
                 sub:CreateButton("|T" .. M():IconTexture(ic.m) .. ":14:14|t  " .. (ic.m == p.m and S:Wrap("GOLD", ic.name) or ic.name),
                     function() M():SetPart(id, { m = ic.m }) end)
+            end
+            -- (the text sent where the game draws no icon: chat channels)
+            local cur = p.tx or M().DEFAULT_MARKER
+            local mk = root:CreateButton("Marker in channels")
+            for _, t in ipairs(M().MARKERS) do
+                mk:CreateButton(t == cur and S:Wrap("GOLD", t) or t, function() M():SetPart(id, { tx = t }) end)
             end
         end
         root:CreateDivider()
@@ -1004,9 +1010,22 @@ function H.PlaceRow(m, i)
         end)
     row.sw:SetPoint("LEFT", 0, 0)
     row.name = UI:Text(row, "body", "TEXT")
-    row.name:SetPoint("LEFT", row.sw, "RIGHT", 8, 0)
+    row.name:SetPoint("LEFT", row.sw, "RIGHT", 8, 6)
     row.name:SetWidth(112)
     row.name:SetJustifyH("LEFT")
+    -- which saved message this place sends: the line under its name, a click picks another
+    row.msg = CreateFrame("Button", nil, row)
+    row.msg:SetSize(112, 13)
+    row.msg:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -1)
+    row.msg.text = UI:Text(row.msg, "small", "SUB")
+    row.msg.text:SetAllPoints()
+    row.msg.text:SetJustifyH("LEFT")
+    row.msg.text:SetWordWrap(false)
+    row.msg:SetScript("OnClick", function(self) if row.id then H.PlaceMessageMenu(self, row.id) end end)
+    row.msg:SetScript("OnEnter", function(self) self.text:SetTextColor(S:Color("GOLD")) end)
+    row.msg:SetScript("OnLeave", function(self) self.text:SetTextColor(S:Color("SUB")) end)
+    UI:AttachTooltip(row.msg, "Message", { "The saved message this place sends. Click to pick another." },
+        { anchor = "ANCHOR_TOP" })
     row.every = UI:Text(row, "small", "SUB")
     row.every:SetPoint("LEFT", 160, 0)
     row.every:SetText("every")
@@ -1045,6 +1064,22 @@ function H.PlaceRow(m, i)
     row.del:SetScript("OnClick", function() if row.id then M():RemovePlace(row.id) end end)
     m.rows[i] = row
     return row
+end
+
+-- The saved message a place sends: the one in use (follows what's being edited), or one picked for it.
+function H.PlaceMessageMenu(owner, placeId)
+    local p = M():GetPlace(placeId)
+    if not p then return end
+    UI:ContextMenu(owner, function(root)
+        root:CreateTitle("Message for " .. (p.name or "this place"))
+        root:CreateButton(p.msg == nil and S:Wrap("GOLD", "The one in use") or "The one in use",
+            function() M():SetPlace(placeId, { msg = false }) end)
+        root:CreateDivider()
+        for _, m in ipairs(M():GetMessages()) do
+            root:CreateButton(p.msg == m.id and S:Wrap("GOLD", m.name) or m.name,
+                function() M():SetPlace(placeId, { msg = m.id }) end)
+        end
+    end)
 end
 
 function H.AddPlaceMenu(owner)
@@ -1264,7 +1299,8 @@ end
 
 function H.FillPreview()
     local m = view.message
-    local text, n, long = M():Compose()
+    -- (as Trade shows it: the icon parts' text markers; Say and Yell draw the icons)
+    local text, n, long = M():Compose(true)
     m.prevText:SetText("[2. Trade] [" .. Name(Me()) .. "|cffffbfbf]: " .. (text and M():Render(text) or S:Wrap("SUB", "(add a part to the message)")))
     m.prev:SetHeight(math.max(60, (m.prevText:GetStringHeight() or 14) + 2 * S.IN + 4))
     m.count:SetText((long and S:Wrap("BAD", "too long  ") or "") .. n .. " / " .. M().MAX_LEN)
@@ -1342,8 +1378,10 @@ function H.FillWrite()
         elseif pick.k == "icon" then
             w.info:ClearAllPoints()
             w.info:SetPoint("TOPLEFT", 0, -y)
-            w.info:SetText("Says " .. S:Wrap("TEXT", pick.text) .. ": chat shows it as the " .. M().ICONS[pick.m or 1].name:lower()
-                .. " icon " .. M():Render(pick.text) .. ". Right-click the chip to change it.")
+            local mark = S:Wrap("TEXT", pick.tx or M().DEFAULT_MARKER)
+            w.info:SetText("Says " .. S:Wrap("TEXT", pick.text) .. " in Say and Yell: the " .. M().ICONS[pick.m or 1].name:lower()
+                .. " icon " .. M():Render(pick.text) .. ". Channels draw no icons, so there it says " .. mark
+                .. ". Right-click the chip to change either.")
             y = y + (w.info:GetStringHeight() or 14) + 10
         elseif pick.k == "tag" then
             w.info:ClearAllPoints()
@@ -1413,6 +1451,7 @@ function H.FillPosting()
         row.sw:Refresh()
         row.city:SetChecked(p.city)
         row.name:SetText(p.kind == "CHANNEL" and p.name or S:Wrap("GOLD", "/" .. p.name:lower()))
+        row.msg.text:SetText((p.msgName or ("In use: " .. select(2, M():Current()))) .. " \226\150\190")
         if not row.box:HasFocus() then row.box:SetText(tostring(p.u == "s" and p.every or floor(p.every / 60))) end
         row.unit:Select(p.u)
         row:SetAlpha(p.on and 1 or 0.6)

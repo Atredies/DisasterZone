@@ -2,6 +2,9 @@ if DisasterZoneBoot and DisasterZoneBoot.Run("Core/Roll.lua", ...) then return e
 -- Roll sessions (Addendum A §19): one open roll at a time (others wait in a queue), RS/RR/RE/RW
 -- raid messages, /roll parsing from CHAT_MSG_SYSTEM, a BiS-aware winner suggestion and the award
 -- flow (master-loot hand-out or confirm, then record + announce). Sessions live in memory only.
+-- A raider who logs in / reloads in a group asks for open rolls (RQ); the starter of a roll
+-- still open sends its RS again on the group channel with the time left (re = 1), so the roll window comes back.
+-- Clients that already know the roll (open or closed) ignore it: a closed roll is never reopened.
 -- Dungeon mode (Addendum B §22.2): in a 5-man party the same messages run on PARTY.
 -- Addendum C §23: a loot message for a rolled item resolves its session on every client
 -- (Roll:OnItemLooted, via = "loot"), and awards made outside the roll UI go through
@@ -60,6 +63,8 @@ local MAX_NOTE_LEN = 64
 local LOOT_MATCH_AGE = 15 * 60   -- a loot message resolves sessions created at most 15 min ago
 local SOLO_DURATION = 5          -- 1.4.3: an item one player reserved: no roll, the session only names them
 local MAX_RK = 40                -- reservers named in an RS
+local RQ_DELAY, RQ_JITTER = 6, 2 -- after a login / reload in a group: ask for open rolls (after the raid council's CR)
+local RQ_REPLY_DELAY = 1         -- the starter answers RQs at most once per roll per this many seconds (coalesced)
 
 local MAX_VOTES = 40             -- voters per session (one vote per council member in the group)
 
@@ -173,11 +178,17 @@ end
 -- no roll), "g" (held for the guild: the loot council among guild members), "o" (up for grabs: everyone rolls), nil
 -- (reserves are not the loot method). Decided by the starter when the roll opens (RS rv / rk). ses.force = "o": the
 -- council opened a guild item to everyone (Roll:StartUpForGrabs).
+-- Two copies of an item in one drop: each copy uses up one reservation. The players who got (or, on a closed roll, are
+-- about to get) another copy of it from this drop are no reservers of this copy (CopyClaims); when nobody is left,
+-- the copy is up for grabs. (DisasterZone 1.5.5 / 1.6.0 rolled every copy among all reservers again: one reserver got
+-- both copies.)
+local CopyClaims   -- forward declaration (Results section)
+
 local function ReserveDecision(ses)
     if ses.party then return nil end
     local R = ns.Reserves
     if not (R and R.Decide) then return nil end
-    local kind, keys = R:Decide(ses.i)
+    local kind, keys = R:Decide(ses.i, CopyClaims(ses))
     if kind and ses.force == "o" then return "o" end
     return kind, keys
 end
@@ -1020,6 +1031,62 @@ local function BuildResults(ses)
     return Roll:RankRows(out, { plain = plain, mat = mat, prized = przRec, solo = solo })
 end
 
+-- Who has the other copies of itemID from drop s (copy c is the one asked about): the winners of their awarded
+-- rolls, the one suggestion of a closed roll nobody awarded yet (a reserves roll names its reserver at once, the
+-- award follows), and the loot log's awards of the item for that drop (the Award menu). { [key] = true } or nil.
+-- Only for a drop with an identity (s ~= ""): two rolls without one are not copies of one drop.
+local function ClaimsOf(itemID, s, c, demo)
+    if type(s) ~= "string" or s == "" then return nil end
+    local set
+    local function Add(key)
+        if type(key) == "string" then
+            set = set or {}
+            set[key] = true
+        end
+    end
+    for _, other in pairs(sessions) do
+        if other.i == itemID and other.s == s and other.c ~= c and (other.demo and true or false) == demo then
+            if other.state == "awarded" then
+                Add(other.winner)
+            elseif other.state == "closed" then
+                local pick, n = nil, 0
+                for _, row in ipairs(BuildResults(other)) do
+                    if row.suggested then
+                        pick = row.key
+                        n = n + 1
+                    end
+                end
+                if n == 1 then Add(pick) end   -- (a tie: nobody is sure to have it yet)
+            end
+        end
+    end
+    -- the loot log's awards of the item for this drop (Loot history)
+    local Ledger, Loot = ns.Ledger, ns.Loot
+    if not demo and Ledger and Ledger.AwardsForDrop and Loot and Loot.GetHistory then
+        local hist = Loot:GetHistory()
+        for k = #hist, 1, -1 do
+            local d = hist[k]
+            if type(d) == "table" and d.s == s then
+                for _, e in ipairs(Ledger:AwardsForDrop(d)[itemID] or {}) do Add(e.w) end
+                break
+            end
+        end
+    end
+    return set
+end
+
+CopyClaims = function(ses)
+    return ClaimsOf(ses.i, ses.s, ses.c, ses.demo and true or false)
+end
+
+-- (public) The players who have (or are about to get) the other copies of itemID from the drop with source s, for
+-- copy c: { [key] = true } or nil. The drop panel's reserves preview of a copy that has no roll yet.
+function Roll:CopyClaims(itemID, s, c)
+    itemID = tonumber(itemID)
+    if not itemID then return nil end
+    return ClaimsOf(itemID, s, tonumber(c) or 1, DemoOn() and true or false)
+end
+
 -- Orders result rows and marks the suggestion (suggested / suggestedBy / tie / split), in place; returns them.
 -- ctx = { plain = a plain roll, mat = crafting material wants, prized = the item's prized record, rules = the loot rules
 -- (default: the guild's, Guild:GetLootRules) }. Rows need: key, name, roll, invalid, response, inRaid, votes, tier,
@@ -1822,6 +1889,50 @@ local function CleanNote(s)
     return s
 end
 
+-- The one transition to "awarded" (2026-11-12: Finish, MarkAwarded and OnRollWin each wrote the award fields by hand,
+-- each a different subset). src.kind says whose award it is:
+--   "mine"   my own award (Finish): awardedBy me, awardTs the server time, src.reason, src.looted
+--   "loot"   a loot message named the winner (MarkAwarded): provisional, so no awardedBy / awardTs / reason;
+--            via = "loot", looted, lootPrev = the state before (an open session is closed on the spot, no RE)
+--   "remote" another council member's or the master looter's RW (OnRollWin): awardedBy the sender, awardTs their
+--            `at` (may be nil), src.reason; looted stays as it was
+-- An open session is closed first (CloseSession; a loot mark closes inline and the caller advances the queue), a queued
+-- one leaves the queue. Kept on purpose: prized (a pending hand-out's facts, which Finish reads when my own master-loot
+-- hand-out completes after a loot mark or a crossed award; Finish clears it) and lootOther (FlagLootConflict sets it
+-- after). final is rebuilt here, except for "mine": Finish rebuilds it after the ledger. The caller fires Updated.
+-- Returns the state the session was in.
+local function SetAwarded(ses, key, src)
+    local prev = ses.state
+    local kind = src.kind
+    if prev == "open" then
+        if kind == "loot" then
+            local now = GetTime()
+            if not ses.endsAt or ses.endsAt > now then ses.endsAt = now end
+            ses.closedAt = now
+        else
+            CloseSession(ses)
+        end
+    elseif prev == "queued" then
+        RemoveFromQueue(ses)
+    end
+    ses.state = "awarded"
+    ses.winner = key
+    ses.given = src.given and true or false
+    ses.via = kind == "loot" and src.via or nil
+    if kind == "loot" then
+        ses.looted = (src.via == "loot") or nil
+    elseif kind == "mine" then
+        ses.looted = src.looted or nil
+    end
+    ses.lootPrev = kind == "loot" and prev or nil
+    ses.awardedBy = kind ~= "loot" and src.by or nil
+    ses.awardedAt = GetTime()
+    ses.awardTs = kind ~= "loot" and src.ts or nil
+    ses.reason = kind ~= "loot" and src.reason or nil
+    ses.final = kind ~= "mine" and BuildResults(ses) or nil
+    return prev
+end
+
 -- extraNote (optional, cleaned): the awarder's own note; the ledger / RW note becomes "<note>; roll 80"
 -- (at most MAX_NOTE_LEN bytes, the roll part is kept).
 -- areason (optional): the award reason (Addendum G); nil = from the winner's BiS tier.
@@ -1878,17 +1989,8 @@ local function Finish(ses, key, given, extraNote, areason)
         if own ~= "" then note = own .. "; " .. note end
     end
 
-    ses.state = "awarded"
-    ses.winner = key
-    ses.given = given and true or false
-    ses.via = nil
-    ses.looted = (ses.looted or fromLoot or heldByWinner) or nil
-    ses.lootPrev = nil
-    ses.awardedBy = me
-    ses.awardedAt = GetTime()
-    ses.awardTs = GetServerTime()
-    ses.reason = reason
-    ses.final = nil
+    SetAwarded(ses, key, { kind = "mine", given = given, looted = ses.looted or fromLoot or heldByWinner, by = me,
+                           ts = GetServerTime(), reason = reason })
 
     -- The ledger is council-only. Demo sessions use the in-memory demo ledger; real sessions always
     -- the real one (also while demo mode is on), under an id every council client derives from RW.
@@ -2131,24 +2233,7 @@ end
 -- frozen. An open session is closed on the spot (no RE: every client sees the same loot message).
 -- Nothing is recorded here (council clients record the loot line themselves) and no RW is sent.
 local function MarkAwarded(ses, key, given, via)
-    local prev = ses.state
-    if prev == "open" then
-        local now = GetTime()
-        if not ses.endsAt or ses.endsAt > now then ses.endsAt = now end
-        ses.closedAt = now
-    elseif prev == "queued" then
-        RemoveFromQueue(ses)
-    end
-    ses.lootPrev = prev
-    ses.state = "awarded"
-    ses.winner = key
-    ses.given = given and true or false
-    ses.via = via
-    ses.looted = (via == "loot") or nil
-    ses.awardedBy = nil
-    ses.awardedAt = GetTime()
-    ses.awardTs = nil
-    ses.final = BuildResults(ses)
+    local prev = SetAwarded(ses, key, { kind = "loot", given = given, via = via })
     Updated(ses)
     if prev == "open" then OnSessionFinished(ses) end
 end
@@ -2441,8 +2526,10 @@ local function OnRollStart(sender, msg, dist)
     local now = GetServerTime()
     local ts = tonumber(msg.ts)
     -- Clash resolution only needs same-moment starts: a claimed start far in the past (or NaN) would let any
-    -- council member / master looter pre-empt the running roll everywhere.
-    if not ts or ts ~= ts or ts < now - RS_TS_PAST or ts > now + RS_TS_FUTURE then ts = now end
+    -- council member / master looter pre-empt the running roll everywhere. A re-sent RS (re = 1, the answer to an
+    -- RQ) carries the time left as d and the real start, which may be up to a whole roll ago.
+    local past = (msg.re == 1) and (RS_TS_PAST + MAX_DURATION) or RS_TS_PAST
+    if not ts or ts ~= ts or ts < now - past or ts > now + RS_TS_FUTURE then ts = now end
 
     Prune()
     local ses = NewSession({ id = id, i = itemID, s = s, b = b, c = c, starter = sender, state = "open" })
@@ -2569,6 +2656,36 @@ local function OnRollEnd(sender, msg, dist)
     end
 end
 
+-- RQ {}: a group member logged in / reloaded and asks for open rolls. The starter of a roll that is
+-- still open here sends its RS again on the group channel, d = the seconds left, re = 1. Every client that knows the
+-- roll already (open, closed or awarded) drops it on the id; several RQs at once get one answer per roll.
+local function ResendStart(ses)
+    if ses.state ~= "open" or not ses.isLocal or ses.demo or not ses.endsAt then return end
+    local left = floor(ses.endsAt - GetTime())
+    if left < MIN_REMOTE_DURATION then return end   -- nearly over: a window now would only flash
+    Send({ t = "RS", id = ses.id, i = ses.i, s = ses.s, b = ses.b, d = left, ts = ses.startedAt, c = ses.c,
+           pl = (not ses.party) and (ses.plain and 1 or 0) or nil, rv = ses.rv, rk = ses.rk, re = 1 })
+end
+
+local function OnRollQuery(sender, msg, dist)
+    if DemoOn() or not GroupDist(dist) or Util.IsMe(sender) then return end
+    for _, ses in pairs(sessions) do
+        if ses.state == "open" and ses.isLocal and not ses.demo and not ses.resendPending then
+            ses.resendPending = true
+            Util.After(RQ_REPLY_DELAY, function()
+                ses.resendPending = nil
+                ResendStart(ses)
+            end)
+        end
+    end
+end
+
+-- After a login / reload: in a group without an open roll, ask once whether one is running.
+local function AskOpenRolls()
+    if DemoOn() or not GroupChannel() or Roll:GetActive() then return end
+    Send({ t = "RQ" })
+end
+
 -- Deterministic choice between two conflicting awards of one session (every client picks the same):
 -- a master-loot hand-out beats a recorded award, then the earlier award (server time; unknown = last),
 -- then the smaller awarder key.
@@ -2661,19 +2778,9 @@ local function OnRollWin(sender, msg, dist)
             ItemText(ses), Util.ShortName(w), Util.ShortName(sender), Util.ShortName(lost))
     end
     local lootWas = fromLoot and ses.winner or nil
-    if ses.state == "open" then CloseSession(ses) end
-    ses.state = "awarded"
-    ses.winner = w
-    ses.given = given
-    ses.via = nil
-    ses.lootPrev = nil
-    ses.awardedBy = sender
-    ses.awardedAt = GetTime()
-    ses.awardTs = at
     -- r (Addendum G): the award reason; an older sender has none (the log then shows no reason).
     local reason = (type(msg.r) == "string" and ns.AWARD_REASON[msg.r]) and msg.r or nil
-    ses.reason = reason
-    ses.final = BuildResults(ses)
+    SetAwarded(ses, w, { kind = "remote", given = given, by = sender, ts = at, reason = reason })
     if lootWas and lootWas ~= w then FlagLootConflict(ses, lootWas) end
     -- Every council client records it: a non-council master looter / leader cannot write the ledger.
     if council then
@@ -2713,16 +2820,21 @@ local function OnDemoToggled()
     for _, ses in pairs(sessions) do
         local live = ses.state == "open" or ses.state == "queued"
         if live then
-            ses.state = "cancelled"
+            -- a real roll I started is cancelled for everyone (RE x, sent past the demo switch: real = true), not
+            -- only here: before 2026-11-12 the others kept it open, closed it on their timer and could award it
+            -- while my client called it cancelled. Someone else's roll: theirs to end, demo only hides it here.
+            if ses.isLocal and not ses.demo and ses.state == "open" then Send({ t = "RE", id = ses.id, x = true }, true) end
             if ses.endsAt == nil or ses.endsAt > GetTime() then ses.endsAt = GetTime() end
+            CancelSession(ses)   -- (the queue is empty already: nothing advances)
+        elseif ses.demo then
+            changed[#changed + 1] = ses
         end
-        if live or ses.demo then changed[#changed + 1] = ses end
     end
     for _, ses in ipairs(changed) do
-        if ses.demo then ses.state = "cancelled" end
+        ses.state = "cancelled"
         Updated(ses)
     end
-    for _, ses in ipairs(changed) do
+    for _, ses in pairs(sessions) do
         if ses.demo then sessions[ses.id] = nil end
     end
 end
@@ -2810,6 +2922,11 @@ local function Guarded(fn)
     end
 end
 
+-- Login and /reload both run OnLogin: a roll that opened before it comes back (RQ, answered by its starter).
+function Roll:OnLogin()
+    Util.After(RQ_DELAY + math.random() * RQ_JITTER, AskOpenRolls)
+end
+
 function Roll:OnInit()
     ns:RegisterEvent("CHAT_MSG_SYSTEM", function(_, text) Roll:OnSystemMessage(text) end)
     ns:On("DEMO_TOGGLED", OnDemoToggled)
@@ -2823,6 +2940,7 @@ function Roll:OnInit()
         Comm:Register("RW", OnRollWin)
         Comm:Register("RT", OnRollTiers)
         Comm:Register("RV", OnRollVote)
+        Comm:Register("RQ", OnRollQuery)
     end
     ns:RegisterSlash("roll", SlashRoll, "<item link> - start a raid roll for an item (loot council / master looter); 'end' ends it")
 

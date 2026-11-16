@@ -124,11 +124,7 @@ end
 
 local function plural(n, one, many) return n == 1 and ("1 " .. one) or (n .. " " .. (many or (one .. "s"))) end
 
-local function whisper(key)
-    local name = (Ambiguate and Ambiguate(key, "none")) or H.Short(key)
-    local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
-    if open then open("/w " .. name .. " ") end
-end
+local function whisper(key) ns.Util.Whisper(key) end
 
 -- The same, measured in a text style (for a component that sets the text itself).
 function H.PickVariant(variants, room, style)
@@ -794,11 +790,11 @@ local function fillNote(kind, key, e, bl)
         return 0
     end
     local black = kind == "black"
-    local text, by, at
+    local text, by, at, via
     if black then
-        text, by, at = bl.reason, bl.by, bl.at
+        text, by, at, via = bl.reason, bl.by, bl.at, bl.via
     else
-        text, by, at = e and e.note, e and e.noteBy, e and e.noteAt
+        text, by, at, via = e and e.note, e and e.noteBy, e and e.noteAt, e and e.noteVia
     end
     if editing then
         n:Hide()
@@ -814,6 +810,8 @@ local function fillNote(kind, key, e, bl)
     else
         line = text or H.Dim("No reason given.")
         if by then line = line .. "   " .. H.Dim(H.Short(by) .. (at and (" · " .. date("%d %b", at)) or "")) end
+        -- (passed on by another manager, not by its writer: the name is their word, Core/GuestBook.lua OnNotes)
+        if via then line = line .. " " .. H.Dim("(relayed by " .. H.Short(via) .. ")") end
         line = line .. pencil
         -- a guild member's other characters: covered too
         if black and inGuild(key) then

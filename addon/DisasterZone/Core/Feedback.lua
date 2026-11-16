@@ -21,8 +21,9 @@ if DisasterZoneBoot and DisasterZoneBoot.Run("Core/Feedback.lua", ...) then retu
 --   seq = { [author] = last n }   numbers of my characters' items and replies
 --   no  = last item number given (the developer's account only)
 -- A record is replaced only by one with a higher rv (ties: the larger canonical text), so every client ends with the
--- same set. Items, me-toos and replies come from anyone; a status, a number and a staff member's reply are taken only
--- from staff (they could be made up by anyone passing them on). An item closed (or withdrawn) long ago is "archived":
+-- same set. Items, me-toos and replies are believed from their author or staff; passed on by anyone else, a new one is
+-- kept marked rb = who passed it on (shown on the item) and never changes or withdraws one I hold (Put); a status, a
+-- number and a staff member's reply are taken only from staff (they could be made up by anyone passing them on). An item closed (or withdrawn) long ago is "archived":
 -- out of the sync, and dropped except on the developer's account (dev/tools/feedback.py reads the developer's file).
 --
 -- Messages (prefix CDLb, class "fb"):
@@ -294,6 +295,63 @@ local function Newer(a, b)
     return Util.Canonical(a) > Util.Canonical(b)
 end
 
+-- 2026-11-09 (authority holes 4): who vouches for a record's author (rec.a). Its author's own client (another
+-- character of theirs) and mine do; staff do too (they keep only copies vouched for: everything they hold came
+-- through this check). A copy passed on by anybody else is believed about nothing but that it was passed on: a new
+-- record is kept marked with who passed it on (rb, shown on the item; feedback has to travel through whoever is
+-- online, so the developer still gets what a member wrote while nobody else was there), and it never changes or
+-- withdraws a record I hold (that waits for the author's or a staff member's copy, asked for at once: AskAuthor).
+-- An unconfirmed copy (rb) never replaces one I hold, from anybody; the author's or staff's plain copy of the same
+-- version replaces it (the mark goes).
+local function SameWriter(a, b)
+    if a == b then return true end
+    local Guild = G()
+    return (Guild and Guild.SameAccount and Guild:SameAccount(a, b)) and true or false
+end
+
+local askedAuthor = {}  -- [id .. "|" .. member] = rv asked for (once per version and member)
+local askQueue = {}     -- [member] = { id, ... } waiting to go out (one FBQ each, a second later)
+
+local function FlushAsks()
+    local C = ns.Comm
+    for target, ids in pairs(askQueue) do
+        if C and C.Send then C:Send({ t = "FBQ", q = ids }, "WHISPER", target, "fb") end
+    end
+    askQueue = {}
+end
+
+-- A copy I did not take (or took marked) from a relayer: asked for from its author, else a staff member online
+-- (again when someone comes online: RetryAsks).
+local function AskAuthor(id, rec, via)
+    local Guild = G()
+    if not (Guild and Guild:IsReady()) then return end
+    local target
+    for _, m in ipairs(Guild:GetOnlineMembers()) do
+        if m ~= via and not Util.IsMe(m) then
+            if SameWriter(m, rec.a) then target = m break end
+            if not target and Feedback:IsStaff(m) then target = m end
+        end
+    end
+    if not target then return end
+    local k = id .. "|" .. target
+    if askedAuthor[k] and askedAuthor[k] >= rec.rv then return end
+    askedAuthor[k] = rec.rv
+    local list = askQueue[target] or {}
+    askQueue[target] = list
+    if #list >= 100 then return end
+    list[#list + 1] = id
+    Util.Debounce("feedback-ask", 1, FlushAsks)
+end
+
+-- The copies I hold marked as passed on (rb): asked for again from their authors (or staff) who are online now.
+local function RetryAsks()
+    local s = Store(false, true)
+    for id, rec in pairs(s and s.r or {}) do
+        if rec.rb then AskAuthor(id, rec, rec.rb) end
+    end
+end
+Feedback.RetryAsks = RetryAsks
+
 local recordCount = 0
 
 local function CountRecords()
@@ -310,14 +368,28 @@ local function Put(id, rec, sender, real)
     real = real or sender ~= nil or not DemoOn()
     local s = Store(true, real)
     if not s then return false end
+    -- who vouches for it (see SameWriter above)
+    if sender == nil or SameWriter(sender, rec.a) then
+        rec.rb = nil
+    elseif not Feedback:IsStaff(sender) then
+        rec.rb = sender
+    elseif rec.rb ~= nil and WireKey(rec.rb) ~= rec.rb then
+        rec.rb = sender     -- (staff pass on an unconfirmed copy as it is: a malformed mark names them)
+    end
     local old = s.r[id]
+    if old and rec.rb then
+        -- an unconfirmed copy never changes (or withdraws) what I hold: the author's is asked for
+        if Newer(rec, old) and sender ~= nil then AskAuthor(id, rec, sender) end
+        return false
+    end
     if old then
-        if not Newer(rec, old) then return false end
+        if not Newer(rec, old) and not (old.rb and rec.rv == old.rv) then return false end
     elseif real then
         if recordCount >= MAX_RECORDS then return false end
         recordCount = recordCount + 1
     end
     s.r[id] = rec
+    if rec.rb and sender ~= nil then AskAuthor(id, rec, sender) end
     return true
 end
 
@@ -883,7 +955,7 @@ local function Rebuild()
             items[id] = {
                 id = id, author = rec.a, n = rec.n, kind = rec.kd, text = rec.x, about = rec.ab, ref = rec.rf,
                 ctx = rec.c, err = rec.e, at = rec.t, rv = rec.rv, anon = rec.an == 1, gone = rec.d == 1, auto = rec.au == 1,
-                votes = {}, replies = {}, voteCount = 0,
+                via = rec.rb, votes = {}, replies = {}, voteCount = 0,
             }
         end
     end
@@ -894,7 +966,7 @@ local function Rebuild()
                 item.votes[rec.a] = true
                 item.voteCount = item.voteCount + 1
             elseif rec.k == "r" and rec.d ~= 1 and (rec.a == item.author or Feedback:IsStaff(rec.a)) then
-                item.replies[#item.replies + 1] = { id = id, author = rec.a, text = rec.x, at = rec.t,
+                item.replies[#item.replies + 1] = { id = id, author = rec.a, text = rec.x, at = rec.t, via = rec.rb,
                     staff = Feedback:IsStaff(rec.a) and rec.a ~= item.author }
             elseif rec.k == "s" then
                 item.state, item.stateBy, item.stateAt, item.dup, item.shipped = rec.s, rec.a, rec.rv, rec.dp, rec.v
@@ -1484,6 +1556,8 @@ function Feedback:OnInit()
     ns:On("CONFIG_UPDATED", function() Changed() end)
     ns:On("DEMO_TOGGLED", function() Changed() end)
     ns:On("GUILD_KEY_READY", function() cache.dirty = true end)
+    -- (someone came online: the author of a copy passed on to me may confirm it now)
+    ns:On("ROSTER_UPDATED", function() Util.Debounce("feedback-retry-asks", 5, RetryAsks) end)
 end
 
 function Feedback:OnLogin()

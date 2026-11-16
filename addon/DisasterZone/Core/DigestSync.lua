@@ -117,13 +117,250 @@ end
 
 -- A record from a member (live: their own change, checked against what is true now; else relayed from a store).
 -- Returns stored, the clean record.
-function Engine:StoreRecord(kind, r, live)
+-- (retry: a held copy tried again, Engine:RetryHeld, which keeps it when the merge still refuses it)
+function Engine:StoreRecord(kind, r, live, sender, retry)
     if not self.kindSet[kind] then return false end
     local root = self:Root(true)
     if not root then return false end
     local rec = self.cfg.clean(kind, r)
     if not rec then return false end
-    return self.cfg.merge(root, kind, rec, live), rec
+    -- 2026-11-09 (authority holes, round 2): a relayed record names its writer (rec.by) in a field the sender controls.
+    -- cfg.vouch(root, kind, rec, sender) says whether this sender may pass it on (its writer, or someone who could have
+    -- written it themselves): a record whose write needs a role is otherwise refused, and comes from a writer's store.
+    if not live and type(sender) == "string" and not Util.IsMe(sender) and self.cfg.vouch
+        and not self.cfg.vouch(root, kind, rec, sender) then
+        ns:Debug("%s: %s:%s from %s refused (relayed, not vouched for)", self.cfg.prefix or "sync", kind, tostring(rec.id),
+            sender)
+        -- (round 3: kept and asked for from its writer or someone who vouches for it, see Hold below)
+        if self.hold then self:Hold(kind, rec, sender) end
+        return false, rec
+    end
+    local ok = self.cfg.merge(root, kind, rec, live)
+    if ok and self.hold and next(self.hold.items) then self:ScheduleRetryHeld() end
+    -- (a vouched copy the merge refused for now: kept to try again when the roles change, see Hold)
+    if not ok and not live and not retry and self.hold and type(sender) == "string" and not Util.IsMe(sender) then
+        local cur = root[kind][rec.id]
+        if not (cur and not self.hold.newer(rec, cur)) then self:Hold(kind, rec, sender, true) end
+    end
+    return ok, rec
+end
+
+---------------------------------------------------------------------------
+-- Held back (2026-11-09, authority holes round 3)
+---------------------------------------------------------------------------
+
+-- A relayed record whose sender does not vouch for it (cfg.vouch) is not taken, and not lost either: with
+-- Engine:EnableHold it is kept here (memory only, HOLD_KEEP at most) and asked for (XXW, a whisper) from its writer or
+-- from another online member who vouches for it (cfg.vouch with that member as the sender: someone whose store holds
+-- only copies taken that way). Their answer (XXG) goes through the same checks. A vouched copy the merge refused (the
+-- guild's roles not known yet after a login, a poll's answer before its poll) is kept too, without asking. Held copies
+-- are tried again, and asked for from whoever may now vouch for them, when the guild's roles or roster change (someone
+-- logged in) and after a record is stored. One ask per record version and member per ASK_AGAIN; a made-up record
+-- nobody holds is dropped after HOLD_KEEP.
+local ASK_GAP = 6                -- seconds between two asks to one member (OnWant takes one a member per 5 s)
+local ASK_AGAIN = 240            -- asked again after this long (an answer may wait behind a long send queue)
+local MAX_TRIES = 3              -- asks for one held copy at most
+local FIRST_WAIT = 15            -- the writer is asked first only after this long (see AskHeld)
+local HOLD_KEEP = 900            -- a held copy is dropped after this long
+
+local function Count(t)
+    local n = 0
+    for _ in pairs(t) do n = n + 1 end
+    return n
+end
+
+-- o (optional): store(kind, rec, via) (default: StoreRecord), changed() (default: cfg.changed), newer(a, b) (default:
+-- Engine.Newer). Called from the module's OnInit.
+function Engine:EnableHold(o)
+    o = o or {}
+    local eng = self
+    self.hold = {
+        store = o.store or function(kind, rec, via) return eng:StoreRecord(kind, rec, false, via, true) end,
+        changed = o.changed or self.cfg.changed, newer = o.newer or Engine.Newer,
+        items = {},              -- [item] = { kind, rec, via, at = GetTime(), ok = vouched (only the merge refused) }
+        asked = {},              -- [item .. "|" .. rev .. "|" .. member] = GetTime()
+        lastAsk = {},            -- [member] = GetTime()
+    }
+    for _, e in ipairs({ "CONFIG_UPDATED", "ACCOUNTS_UPDATED", "ROSTER_UPDATED" }) do
+        ns:On(e, function() if next(eng.hold.items) then eng:ScheduleRetryHeld() end end)
+    end
+end
+
+-- vouched: the sender vouches for it, only the merge refused it (tried again, never asked for).
+function Engine:Hold(kind, rec, via, vouched)
+    local h = self.hold
+    if not h or type(rec) ~= "table" or type(rec.id) ~= "string" then return end
+    local item = kind .. ":" .. rec.id
+    local cur = h.items[item]
+    if cur and not h.newer(rec, cur.rec) and not (vouched and not cur.ok) then return end
+    if not cur and Count(h.items) >= self.maxItems then return end
+    h.items[item] = { kind = kind, rec = rec, via = via, at = GetTime(), ok = vouched and true or nil }
+    if not vouched then self:ScheduleAskHeld(2) end
+end
+
+-- Am I still waiting for a vouched copy of a record someone passed on (held less than HOLD_QUIET ago)? My store is
+-- then likely incomplete (a catch-up from a plain member, the vouched copies still on their way): I leave answering a
+-- newcomer's HELLO to the others (OnHelloDigest), or the newcomer would sync with a store that lacks them.
+local HOLD_QUIET = 120
+function Engine:Waiting()
+    local h = self.hold
+    if not h or not next(h.items) then return false end
+    local now = GetTime()
+    for _, p in pairs(h.items) do
+        if not p.ok and now - p.at < HOLD_QUIET then return true end
+    end
+    return false
+end
+
+-- Whom to ask for what a digest from `sender` showed I lack (OnDigest). A member who passes on only what they wrote
+-- themselves would have most of it held back (and fetched again): with cfg.relayer(key) (may that member pass on any
+-- of the module's records), such a digest's items are asked from a relayer online instead, picked by my name.
+function Engine:WantFrom(sender)
+    local relayer = self.hold and self.cfg.relayer
+    if not relayer or relayer(sender) then return sender end
+    local G = ns.Guild
+    local list = {}
+    for _, m in ipairs(G and G.GetOnlineMembers and G:GetOnlineMembers() or {}) do
+        if not Util.IsMe(m) and m ~= sender and relayer(m) then list[#list + 1] = m end
+    end
+    if #list == 0 then return sender end
+    return list[1 + Util.Adler32(Util.PlayerKey() or "") % #list]
+end
+
+-- Asks for the items a digest from `sender` (theirs) showed I lack: from a relayer (WantFrom) when the sender is none;
+-- what has not come WANT_FALLBACK later (the relayer may lack it too, in the same login wave) from the sender after all
+-- (their copies are then held back and asked for, Hold).
+local WANT_FALLBACK = 150         -- (a busy relayer's answer can wait a minute or two behind its queue)
+function Engine:SendWant(sender, want, theirs)
+    local from = self:WantFrom(sender)
+    self:Send({ t = self.T.W, w = want }, "WHISPER", from, "ctrl")
+    if from == sender then return end
+    Util.After(WANT_FALLBACK, function()
+        local mine = self.module:GetDigest()
+        local rest = {}
+        for _, item in ipairs(want) do
+            if mine[item] ~= theirs[item] and not (self.hold and self.hold.items[item]) then rest[#rest + 1] = item end
+        end
+        if #rest > 0 then self:Send({ t = self.T.W, w = rest }, "WHISPER", sender, "ctrl") end
+    end)
+end
+
+-- Is this record held back? (tests, debugging)
+function Engine:IsHeld(kind, id)
+    return self.hold ~= nil and self.hold.items[kind .. ":" .. tostring(id)] ~= nil
+end
+
+function Engine:ScheduleRetryHeld()
+    Util.Debounce("dsync-retry-" .. (self.cfg.prefix or "?"), 1, function() self:RetryHeld() end)
+end
+
+function Engine:ScheduleAskHeld(delay)
+    Util.Debounce("dsync-ask-" .. (self.cfg.prefix or "?"), delay or 2, function() self:AskHeld() end)
+end
+
+-- The held records again: one I now hold as new or newer, or held too long, is dropped; one someone now vouches for
+-- is stored (kept, if the merge still refuses it).
+function Engine:RetryHeld()
+    local h = self.hold
+    if not h or not next(h.items) then return false end
+    local root = self:Root(false)
+    if not root then return false end
+    local changed, now = false, GetTime()
+    for item, p in pairs(h.items) do
+        local cur = root[p.kind] and root[p.kind][p.rec.id]
+        if (cur and not h.newer(p.rec, cur)) or now - p.at > HOLD_KEEP then
+            h.items[item] = nil
+        elseif p.ok or self.cfg.vouch(root, p.kind, p.rec, p.via) then
+            h.items[item] = nil
+            if h.store(p.kind, p.rec, p.via) then
+                changed = true
+            elseif not h.items[item] then
+                p.ok = true
+                h.items[item] = p
+            end
+        end
+    end
+    if changed and h.changed then h.changed() end
+    if next(h.items) then self:ScheduleAskHeld(1) end
+    return changed
+end
+
+-- Asks for the held records, each from one online member who vouches for it (never the member who passed it on), one
+-- message per member. First a role holder who vouches for every such record (a reviewer, an asker: one message for all
+-- of them), picked by my name, so that after a login wave the newcomers' asks spread over the role holders instead of
+-- all going to the writer (often the GM) or to every member who wrote a sign-up; else the writer. A role holder may
+-- not hold it yet (in the same login wave): it is asked again after ASK_AGAIN, from the writer first when online.
+function Engine:AskHeld()
+    local h = self.hold
+    if not h or not next(h.items) then return end
+    local root = self:Root(false)
+    local G = ns.Guild
+    if not (root and G and G.GetOnlineMembers) then return end
+    local online = G:GetOnlineMembers()
+    local now = GetTime()
+    local lists, wait, again = {}, nil, false
+    for item, p in pairs(h.items) do
+        if not p.ok and p.askedAt and now - p.askedAt < ASK_AGAIN then
+            again = true             -- (its answer may still be on its way)
+        elseif not p.ok then
+            local rev = tostring(p.rec.rev)
+            local cands, writer, recent = {}, nil, false
+            for _, m in ipairs(online) do
+                local at = h.asked[item .. "|" .. rev .. "|" .. m]
+                local isWriter = m == p.rec.by or (G.SameAccount and G:SameAccount(m, p.rec.by))
+                if Util.IsMe(m) or m == p.via then
+                    -- (never)
+                elseif at and now - at < ASK_AGAIN then
+                    recent = true
+                elseif isWriter then
+                    writer = writer or m
+                elseif self.cfg.vouch(root, p.kind, p.rec, m) then
+                    cands[#cands + 1] = m
+                end
+            end
+            p.tries = p.tries or 0
+            local pick
+            if p.tries >= MAX_TRIES then
+                -- (asked enough: kept until HOLD_KEEP, for a member who logs in to vouch for it)
+            elseif writer and #cands == 0 and p.tries == 0 and now - p.at < FIRST_WAIT then
+                -- (just after a login the guild's roles may not be known yet: a role holder is asked rather than the
+                -- writer, who after a login wave would otherwise be asked by every newcomer)
+                again, wait = true, max(wait or 0, FIRST_WAIT - (now - p.at))
+            elseif writer and (p.tries > 0 or #cands == 0) then
+                pick = writer
+            elseif #cands > 0 then
+                pick = cands[1 + Util.Adler32((Util.PlayerKey() or "") .. p.tries) % #cands]
+            elseif recent then
+                again = true
+            end
+            if pick then
+                local gap = ASK_GAP - (now - (h.lastAsk[pick] or -1000))
+                if gap > 0 and not lists[pick] then
+                    wait = max(wait or 0, gap)
+                else
+                    h.asked[item .. "|" .. rev .. "|" .. pick] = now
+                    p.tries, p.askedAt = p.tries + 1, now
+                    again = true
+                    lists[pick] = lists[pick] or {}
+                    local l = lists[pick]
+                    if #l < self.maxItems then l[#l + 1] = item end
+                end
+            end
+        end
+    end
+    for m, list in pairs(lists) do
+        h.lastAsk[m] = now
+        if self.cfg.giveSort then tsort(list, self.cfg.giveSort) else tsort(list) end
+        self:Send({ t = self.T.W, w = list }, "WHISPER", m, "ctrl")
+    end
+    if wait then self:ScheduleAskHeld(wait + 0.1) end
+    -- (still held after ASK_AGAIN: asked again; RetryHeld drops what came or is held too long)
+    if again then
+        Util.Debounce("dsync-again-" .. (self.cfg.prefix or "?"), ASK_AGAIN + 1, function()
+            self:RetryHeld()
+            self:AskHeld()
+        end)
+    end
 end
 
 -- My own change: stored (merged like anyone's), then sent to the guild (XXU). Demo mode changes its own data only.
@@ -329,7 +566,7 @@ end
 
 -- StoreRecord for a record sender sent me (XXU / XXG); a refused copy of a grave gets the deletion back.
 function Engine:StoreFrom(sender, kind, r, live)
-    local ok, rec = self:StoreRecord(kind, r, live)
+    local ok, rec = self:StoreRecord(kind, r, live, sender)
     if not ok then self:ReturnGrave(kind, r, sender) end
     return ok, rec
 end
@@ -343,11 +580,15 @@ function Engine:OnWant(sender, msg, dist)
     if dist ~= "WHISPER" or type(msg.w) ~= "table" or not RateLimit(self.T.W .. ":" .. sender, 5) then return end
     local root = self:Root(false)
     if not root then return end
+    local items = {}
     for i = 1, self.maxItems do
         local item = msg.w[i]
         if item == nil then break end
-        if type(item) == "string" and #item <= self.maxItemLen then self:SendItem(root, item, sender) end
+        if type(item) == "string" and #item <= self.maxItemLen then items[#items + 1] = item end
     end
+    -- (in the module's give order: a record before the ones that refer to it, whatever order they were asked in)
+    if self.cfg.giveSort then tsort(items, self.cfg.giveSort) end
+    for _, item in ipairs(items) do self:SendItem(root, item, sender) end
 end
 
 -- XXD { to, h, d }: an answer to someone's HELLO. Mine: sync with the responder (the first answer of my round only).
@@ -390,9 +631,14 @@ function Engine:OnDigest(sender, msg, dist)
     for item, h in pairs(mine) do
         if theirs[item] ~= h then give[#give + 1] = item end
     end
-    tsort(want)
-    if self.cfg.giveSort then tsort(give, self.cfg.giveSort) else tsort(give) end
-    if #want > 0 then self:Send({ t = self.T.W, w = want }, "WHISPER", sender, "ctrl") end
+    if self.cfg.giveSort then
+        tsort(want, self.cfg.giveSort)
+        tsort(give, self.cfg.giveSort)
+    else
+        tsort(want)
+        tsort(give)
+    end
+    if #want > 0 then self:SendWant(sender, want, theirs) end
     for _, item in ipairs(give) do self:SendItem(root, item, sender) end
 end
 
@@ -411,6 +657,7 @@ function Engine:OnHelloDigest(sender, hash)
     -- (1.4.1: graves only, an empty digest still answers: a member back from a long break gives me its copies, and
     -- gets the deletions back)
     if hash == mine or (mine == "0" and not self:HasGraves()) then return end
+    if self:Waiting() then return end    -- (round 3: my store is still incomplete, see Engine:Waiting)
     if not RateLimit(self.T.D .. "h:" .. sender, ROUND_WINDOW) then return end
     local delay = self.cfg.delay()
     -- With item data still waiting in my queue the digest (and what the newcomer then asks for) would wait behind

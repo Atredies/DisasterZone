@@ -419,11 +419,7 @@ end
 -- Recruitment (Core/Recruit.lua, Core/RecruitIntro.lua; the page is UI/Recruit.lua's Guild > Recruitment)
 local function openRecruit(key) if ns.RecruitUI then ns.RecruitUI:Open(key) end end
 
-local function whisper(key)
-    local name = (Ambiguate and Ambiguate(key, "none")) or Short(key)
-    local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
-    if open then open("/w " .. name .. " ") end
-end
+local function whisper(key) ns.Util.Whisper(key) end
 
 local MILESTONE = { [58] = "hit level 58: off to Outland", [70] = "hit level 70", d = "did a first dungeon with the guild",
                     r = "came to a first raid with the guild" }

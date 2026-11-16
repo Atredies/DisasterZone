@@ -801,7 +801,7 @@ def split_raid_foreign_group_award_is_not_this_drops_award():
     hank.load_addon()
     w.tick(3)
     gm_pick(w, A, ["Bob", "Hank"])
-    w.tick(5)
+    w.tick(10)         # (past Hank's login traffic: the version whispers V answer his HELLO)
     A.open_loot([(RUBY_DRAPE, 4), (HELM_CHAMPION, 4)])
     w.tick(2)
     # the other Karazhan group's officer records the same token from their own Prince kill

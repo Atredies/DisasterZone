@@ -6,7 +6,9 @@ if DisasterZoneBoot and DisasterZoneBoot.Run("Core/EventLive.lua", ...) then ret
 --   EVS { o, h, s = state, c = hosts } GUILD: the run's state (after a change, at most every 2 s and one at a time:
 --         a newer one waits until the last one is out). h is the host; a state naming someone else as host hands
 --         the run over (that client goes on with it). Only the host I know sends it (or hands it on), or an entrant
---         taking over once that host went quiet; anyone else's is not listened to.
+--         taking over once that host went quiet; anyone else's is not listened to. The chain (c) vouches for nobody:
+--         the first I hear of a run counts from the event's own host, or from a signed-up member as its host
+--         (HowSent), and a handover I didn't see coming from the host I know only from the event's host.
 --   EVH { o, h, q = seq } GUILD every 10 s: the host is there (q: the last state sent; anyone behind asks with EVQ).
 --   EVQ { o } WHISPER to the host: send me the state (it goes out with the next state on GUILD, for all who asked).
 --   EVF { o, k, ... } WHISPER to the host: a fact. k = "duel" { w, l } (only the two duelists report; the loser's word
@@ -617,12 +619,18 @@ function Live:HandOver(occId, key)
     key = WireKey(key)
     if not h or not key or key == Me() then return false end
     if not IsOnline(key) then return false, "They're offline." end
+    local was = h.run.st.host
     h.run.st.host = key
     local chain = {}
     for _, x in ipairs(h.hosts) do chain[#chain + 1] = x end
     chain[#chain + 1] = key
     while #chain > MAX_CHAIN do tremove(chain, 2) end
-    Send({ t = "EVS", o = occId, h = key, s = Outgoing(h.run), c = chain }, "GUILD")
+    -- the role moves only when the state went out: a refused send (demo, not in the guild yet after a /reload, too
+    -- large) would leave the event with no host until an entrant takes over (2026-11-12)
+    if not Send({ t = "EVS", o = occId, h = key, s = Outgoing(h.run), c = chain }, "GUILD") then
+        h.run.st.host = was
+        return false, "Could not reach the guild: you still host it."
+    end
     seen[occId] = { st = Outgoing(h.run), h = key, c = chain, at = GetTime() }
     hosting[occId] = nil
     Fire(occId)
@@ -1096,12 +1104,18 @@ local function HowSent(occId, o, sender, host, chain)
         if host == sender or (last == host and before == sender) then return "host" end
         return nil
     end
+    -- 2026-11-09 (authority holes 4): the chain is the sender's word, so it never vouches for anybody. The first I
+    -- hear of a run is believed from the event's own host (its calendar record), or from a member signed up to it (by
+    -- my own calendar data) going on with it as its host; a handover I hear first only from the event's host: anyone
+    -- else could name a victim as host, whose client would then go on with the run and publish its result as theirs.
     if host ~= sender or last ~= sender then
-        -- the first I hear of it is a handover: from the one handing it on, in a chain from the event's host
-        if not known and last == host and before == sender and chain[1] == first then return "host" end
+        if not known and last == host and before == sender and sender == first then return "host" end
         return nil
     end
-    if not known then return (sender == first or chain[1] == first) and "takeover" or nil end
+    if not known then
+        if sender == first then return "takeover" end
+        return (chain[1] == first and Contains(Events():GetSignups(occId) or {}, sender)) and "takeover" or nil
+    end
     local st = mine and mine.run.st or cur.st
     if not (Contains(st.entrants, sender) or sender == first) then return nil end
     local knownChain = mine and mine.hosts or cur.c or {}

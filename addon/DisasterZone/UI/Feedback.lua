@@ -908,7 +908,9 @@ local function RenderDetail()
     b.icon.ring:SetColorTexture(kc[1], kc[2], kc[3], 0.55)
     local label = item.kind == "bug" and "Something broke" or info.short
     b:SetTitle(UI():Colorize(label, kc) .. (item.no and ("  " .. S:Wrap("SUB", "#" .. item.no)) or ""))
-    b:SetSub(FaceText(item.author) .. " " .. UI():ColoredName(item.author) .. S:Wrap("SUB", "  ·  " .. Ago(item.at)))
+    -- (a copy passed on by someone else than its author, not confirmed yet: who passed it on)
+    local via = item.via and ("  ·  passed on by " .. Short(item.via) .. ", not confirmed") or ""
+    b:SetSub(FaceText(item.author) .. " " .. UI():ColoredName(item.author) .. S:Wrap("SUB", "  ·  " .. Ago(item.at) .. via))
     local pillText, pillKind = Pill(item)
     b:SetPill(pillKind, pillText)
     local inbox = state.tab == "inbox"

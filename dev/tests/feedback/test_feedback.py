@@ -79,7 +79,9 @@ def feedback_written_while_the_developer_is_offline_arrives_at_the_next_login():
     w, c = standard()
     settle(w)
     c["Arakis"].logout()
-    w.tick(5)
+    # (past the 60 s a member waits before answering the same member's FBH again, Core/Feedback.lua ANSWER_LIMIT:
+    # Arakis's login sync then gets an answer from whoever it asks, whatever the random login delays were)
+    w.tick(30)
     id_ = submit(c["Alfa"], "idea", "Show who still needs a token on the boss tile.")
     w.tick(5)
     c["Alfa"].logout()          # the author is gone too: Bert carries it

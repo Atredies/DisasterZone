@@ -649,6 +649,18 @@ local function Merge(root, kind, rec, live)
 end
 
 SYNC.clean, SYNC.merge, SYNC.state = CleanRecord, Merge, State
+
+-- 2026-11-09 (authority holes, rounds 2 and 3): a relayed record (EVG) names its writer (rec.by) in a field the sender
+-- controls. It is taken only from its writer (any of their characters) or from a reviewer (the GM, an officer, the
+-- guild council): every client takes relays only that way, so a reviewer's store holds only copies its writer or
+-- another reviewer passed on, and the reviewers answer a newcomer's sync first. Round 2 limited this to the records
+-- whose write needs a role; round 3 covers every kind: a member could otherwise put a calendar event or a library
+-- event "by" the GM on a client that never had it (it then spread by the normal sync), or a sign-up, result or title
+-- "by" anyone. Anyone else's copy is held back and asked for from its writer or a reviewer online (DigestSync Hold).
+SYNC.vouch = function(root, kind, rec, via)
+    return SamePlayer(via, rec.by) or Events:CanReview(via)
+end
+SYNC.relayer = function(key) return Events:CanReview(key) end   -- (who vouches for any record: DigestSync WantFrom)
 -- a review asked for "this revision": the one this commit makes
 SYNC.prepare = function(kind, rec)
     if kind == "D" and type(rec.review) == "table" and rec.review.rev == true then rec.review.rev = rec.rev end
@@ -1332,6 +1344,16 @@ SYNC.items = function(root)
     return items
 end
 
+-- The order a catch-up gives records in: a calendar event before its sign-ups (and its result after it). Sorted by
+-- name, "J:" came before "O:": at about one record a second a member's sign-ups arrived without their calendar event,
+-- and the first Prune after a login (20-40 s in) dropped them as orphans until the next login.
+local GIVE_RANK = { C = 1, D = 2, K = 3, O = 4, J = 5, R = 6, T = 7 }
+SYNC.giveSort = function(a, b)
+    local ra, rb = GIVE_RANK[a:sub(1, 1)] or 9, GIVE_RANK[b:sub(1, 1)] or 9
+    if ra ~= rb then return ra < rb end
+    return a < b
+end
+
 -- EVU { k, r }: a change; its writer is the sender.
 local function OnUpdate(sender, msg, dist)
     if dist ~= "GUILD" or type(msg.r) ~= "table" or WireKey(msg.r.by) ~= sender then return end
@@ -1383,7 +1405,12 @@ function Events:Prune(now)
     end
     for id, j in pairs(root.J) do
         local o = Kept(root, "O", j.o, now)
-        if not o or (not o.del and (o.at or 0) < now - SIGNUP_KEEP) then root.J[id] = nil; changed = true end
+        -- a sign-up of a calendar event that is not here (yet): kept, unless that event is a grave or the sign-up is
+        -- older than any event is kept. (It may be on its way: a catch-up or another member's round can hand over a
+        -- sign-up before its event, and this prune runs 20-40 s after a login; dropped then, the sign-up was missing
+        -- until the next login, its digest item already counted as had.)
+        local orphan = not o and (root.O[j.o] ~= nil or (tonumber(j.at) or tonumber(j.rev) or 0) < now - OCC_KEEP)
+        if orphan or (o and not o.del and (o.at or 0) < now - SIGNUP_KEEP) then root.J[id] = nil; changed = true end
     end
     -- reviews of events gone from the library or deleted long ago (and the ranked copies a reviewer kept of them)
     for id in pairs(root.K) do
@@ -1522,6 +1549,8 @@ end
 
 function Events:OnInit()
     sync:Register(OnUpdate, OnGive)
+    -- (relayed records nobody vouches for: held back and asked for, SYNC.vouch)
+    sync:EnableHold({ changed = function() Events.rankCache = nil; Changed() end })
     ns:On("DEMO_TOGGLED", function(on)
         if not on then demo = nil end
         Changed()

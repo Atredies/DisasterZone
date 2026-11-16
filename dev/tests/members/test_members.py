@@ -214,10 +214,22 @@ def specs_come_from_my_bis_and_else_from_the_talents():
     w.assert_no_errors()
 
 
+def one_account(a, o):
+    """a and o are one player's characters: each client knows the other as its own (the saved variables are per
+    account), so their vouches (Guild accounts, 25-45 s after login) name each other and every client sees them as one
+    account. Call it right after guild(). (2026-11-09: a record of a character is believed from that player only,
+    Professions.Vouches, so the other character's client has to be theirs for the guild, not only for itself.)"""
+    for x, other in ((a, o), (o, a)):
+        x.eval("local k = ...; local gk = ns.Guild:GetGuildKey(); ns.db.accounts = ns.db.accounts or {}; "
+               "ns.db.accounts[gk] = ns.db.accounts[gk] or { mine = {}, v = {} }; ns.db.accounts[gk].mine[k] = true",
+               K(other.name))
+
+
 def alt_world():
     """Alfa and Alto are one player (one account: Alfa's client holds both records as its own); Alto knows Tailoring."""
     w, c = guild([("Gina", "PALADIN"), ("Alfa", "MAGE"), ("Alto", "PRIEST"), ("Bert", "ROGUE")])
     g, a, o, b = c["Gina"], c["Alfa"], c["Alto"], c["Bert"]
+    one_account(a, o)
     set_skills(a, [("Alchemy", 375, 375)])
     set_skills(o, [("Tailoring", 375, 375)])
     w.tick(5)
@@ -513,7 +525,8 @@ def a_debug_role_sees_the_notes_ui_without_touching_the_real_notes():
     assert note(tsu, "Sam") == "A test note."
     assert not [e for e in w.addon_log[start:] if e["sender"] == tsu.full_name and e["chat_type"] == "WHISPER"
                 and e["prefix"] != "CDLb"   # (the feedback sync's login whisper: not a note)
-                and e["prefix"] != "CDLr"]   # (CDLr: the dungeon board, Core/DungeonRuns.lua)
+                and e["prefix"] != "CDLr"    # (CDLr: the dungeon board, Core/DungeonRuns.lua)
+                and e["prefix"] != "CDLc"]   # (CDLc: control, e.g. the version whispered back to a login; notes go on CDLd)
     assert note(gina, "Sam") == "The real note." and note(otto, "Sam") == "The real note."
     # a real officer editing meanwhile, and a login exchange: still nothing for the pretender
     assert set_note(otto, "Sam", "Edited by Otto.")["ok"] is True
@@ -694,6 +707,7 @@ def an_account_without_a_main_gets_its_highest_level_character():
     the highest level one becomes the main and the others its alts."""
     w, c = guild([("Gina", "PALADIN"), ("Alfa", "MAGE"), ("Alto", "PRIEST")])
     g, a, o = c["Gina"], c["Alfa"], c["Alto"]
+    one_account(a, o)
     a.level = 12
     w._sync(roster_changed=True)
     w.tick(SYNC)

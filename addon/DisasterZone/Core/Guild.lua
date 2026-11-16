@@ -241,22 +241,24 @@ end
 -- Roster
 ---------------------------------------------------------------------------
 
-local guildKeyName, guildKeyCache   -- GuildKey() is read on every award-log query: cached per guild name
+-- The guild's own realm (normalised, no spaces or hyphens) when it is not mine: GetGuildInfo's 4th return, which a
+-- member from another realm of a connected group gets. nil = the guild is on my realm.
+local guildRealm
 
+-- "Guild Name-Realm" with the GUILD's realm: every member computes the same key, whichever realm of the connected
+-- group their character is from (the bot's records, the synced buckets).
 local function GuildKey()
     if not guildName then return nil end
-    if guildKeyName == guildName then return guildKeyCache end
-    local realm = Util.GetPlayerRealm() or ""
-    local key = guildName .. "-" .. realm
-    if realm ~= "" then guildKeyName, guildKeyCache = guildName, key end
-    return key
+    return guildName .. "-" .. (guildRealm or Util.GetPlayerRealm() or "")
 end
 
 local function RefreshGuildName()
     if IsInGuild() and GetGuildInfo then
-        local name = GetGuildInfo("player")
+        local name, _, _, realm = GetGuildInfo("player")
         if type(name) == "string" and name ~= "" then
             guildName = name
+            realm = type(realm) == "string" and realm:gsub("[%s%-]", "") or ""
+            guildRealm = realm ~= "" and realm or nil
             -- GetGuildInfo("player") can stay nil for a few seconds after a login; modules that cached data
             -- scoped by the guild key (the award log view) rebuild when it arrives. Deferred: this runs inside
             -- GetGuildKey calls from those very modules.
@@ -733,6 +735,18 @@ local function OnGuildCouncil(sender, msg, dist)
         if stored and not IsTofu(stored) then
             vouched = stored.members[sender] and roster[sender] and true or false
             src = "relay"
+            -- 2026-11-09 (authority holes, round 3): the list is the GM's alone, like the GMR record. A council member
+            -- could relay a rewritten list "by the GM" with a newer rev, and it stood until the GM's own copy came. A
+            -- relay now only confirms the list I hold (the same rev and names, below); a newer one is held back: the
+            -- GM is asked for theirs (online now, or when their HELLO shows the rev, Guild:OnCouncilRevSeen).
+            if vouched and v.rev > stored.rev then
+                ns:Debug("Guild: relayed CG rev %d from %s held back (only the GM's own copy changes the list)", v.rev,
+                    tostring(sender))
+                if gmKey and roster[gmKey] and roster[gmKey].online and RateLimit("cq-gm:" .. gmKey, CQ_REPLY_LIMIT) then
+                    SendCQ("WHISPER", gmKey)
+                end
+                return
+            end
         else
             vouched = v.members[sender] and true or false
             src = "tofu"
@@ -926,6 +940,7 @@ local function ResetGuild()
     roster = {}
     ready = false
     guildName = nil
+    guildRealm = nil
     gmKey = nil
     guildList = nil
     if hadData then
@@ -986,13 +1001,15 @@ end
 -- roster (the author, or an officer passing it on), newer rev wins (the same rev: the larger name list). HELLO carries
 -- my rev (rlr); an officer answers an older one with the list, and asks (RLQ) an officer who has a newer one. An
 -- officer also shares it once after logging in, for members who logged in while no officer was online.
+--
+-- The GM's own rules ride on the same saved record but travel on their own (GMR, below), from the GM only.
 ---------------------------------------------------------------------------
 
 local OFFICER_RANK = 1          -- rank index 0 (GM) and 1 are officers
 local RLL_REPLY_LIMIT = 30
 local RLL_LOGIN_MIN, RLL_LOGIN_MAX = 20, 40
 
--- db.raidLeaders[guildKey] = { rev, m = { [key] = true }, by }
+-- db.raidLeaders[guildKey] = { rev, m = { [key] = true }, by, and the GM's record: gv (its rev), ar, lr, dc, rc }
 local function LeadersRec(create)
     local g = GuildKey()
     if not g then return nil end
@@ -1004,6 +1021,13 @@ local function LeadersRec(create)
         rec.rev, rec.m = 0, {}
     end
     return rec
+end
+
+-- Strictly the Guild Master: rank 0 in the live roster right now. Not an alt, not a debug role, not the GM last seen:
+-- what the GM alone may send (GMR) is checked with this.
+local function IsRosterGM(key)
+    local e = type(key) == "string" and roster[key]
+    return (e and key == gmKey and e.rankIndex == 0) and true or false
 end
 
 ---------------------------------------------------------------------------
@@ -1583,9 +1607,7 @@ Guild.CleanRecruitRules = function(_, rc) return CleanRecruitRules(rc) end
 local function SendRLL(target)
     local rec = LeadersRec(false)
     if not rec or rec.rev == 0 then return false end
-    local msg = { t = "RLL", rev = rec.rev, m = SetToArray(rec.m), by = rec.by, ar = CleanRules(rec.ar), arb = rec.arBy,
-                  lr = CleanLootRules(rec.lr), lrb = rec.lrBy, dc = CleanDiscord(rec.dc), dcb = rec.dcBy,
-                  rc = CleanRecruitRules(rec.rc), rcb = rec.rcBy }
+    local msg = { t = "RLL", rev = rec.rev, m = SetToArray(rec.m), by = rec.by }   -- (the GM's rules: GMR)
     if target then return Send(msg, "WHISPER", target, "ctrl") end
     return Send(msg, "GUILD", nil, "ctrl")
 end
@@ -1621,28 +1643,58 @@ local function OnRaidLeaders(sender, msg, dist)
         if a <= b then return end                      -- the same (or the smaller) list: keep mine
     end
     rec.rev, rec.m, rec.by = msg.rev, set, by
-    -- (the margins are the GM's: from anyone else, or a list without them, the ones I have stay)
-    local ar = CleanRules(msg.ar)
-    local arBy = msg.arb ~= nil and WireKey(msg.arb) or nil
-    if ar and (Guild:IsGM(sender) or (arBy and Guild:IsGM(arBy))) then rec.ar, rec.arBy = ar, arBy or sender end
-    local lr = CleanLootRules(msg.lr)
-    local lrBy = msg.lrb ~= nil and WireKey(msg.lrb) or nil
-    if lr and (Guild:IsGM(sender) or (lrBy and Guild:IsGM(lrBy))) then rec.lr, rec.lrBy = lr, lrBy or sender end
-    local dc = CleanDiscord(msg.dc)
-    local dcBy = msg.dcb ~= nil and WireKey(msg.dcb) or nil
-    if dc and (Guild:IsGM(sender) or (dcBy and Guild:IsGM(dcBy))) then
-        rec.dc, rec.dcBy = dc, dcBy or sender
-        ns:Fire("DISCORD_CHANGED")
-    end
-    local rc = CleanRecruitRules(msg.rc)
-    local rcBy = msg.rcb ~= nil and WireKey(msg.rcb) or nil
-    if rc and (Guild:IsGM(sender) or (rcBy and Guild:IsGM(rcBy))) then
-        rec.rc, rec.rcBy = rc, rcBy or sender
-        ns:Fire("RECRUIT_RULES_CHANGED")
-    end
+    -- (the GM's rules (ar, lr, dc, rc) an RLL may still carry, from an older client, are not read here: an officer
+    -- could write them "by" the GM. They come from the GM's own GMR only.)
+    Recompute()
+end
+
+---------------------------------------------------------------------------
+-- The GM's record: the rules only the Guild Master sets (attendance ar, loot lr, Discord dc, recruitment rc), with
+-- their own rev (gv). Message GMR { v, ar, lr, dc, rc } (GUILD, or WHISPER as an answer): accepted only when its
+-- sender IS the Guild Master (rank 0 in my live roster: no alt, no relay, no "by" field to believe), newer v wins, and
+-- it replaces the whole record (a part left out goes back to its default). HELLO carries my gv (gmr); the GM answers
+-- an older one, and a member with an older one asks the GM (GMQ). A member who never shares a moment online with the
+-- GM keeps the defaults: nobody else can vouch for the GM's rules.
+---------------------------------------------------------------------------
+
+local GMR_REPLY_LIMIT = 30
+
+local function GMRev()
+    local rec = LeadersRec(false)
+    return rec and IsInt(rec.gv, 1, MAX_REV) and rec.gv or 0
+end
+
+local function SendGMR(target)
+    local rec = LeadersRec(false)
+    if not rec or not IsInt(rec.gv, 1, MAX_REV) then return false end
+    local msg = { t = "GMR", v = rec.gv, ar = CleanRules(rec.ar), lr = CleanLootRules(rec.lr), dc = CleanDiscord(rec.dc),
+                  rc = CleanRecruitRules(rec.rc) }
+    if target then return Send(msg, "WHISPER", target, "ctrl") end
+    return Send(msg, "GUILD", nil, "ctrl")
+end
+
+-- The GM only (my own client): bumps the record's rev after a change and shares it.
+local function SaveGMRecord(rec)
+    rec.gv = max(floor(Now()), (IsInt(rec.gv, 0, MAX_REV) and rec.gv or 0) + 1)
+    SendGMR()
+end
+
+local function OnGMRecord(sender, msg, dist)
+    if (dist ~= "GUILD" and dist ~= "WHISPER") or not ready or not IsRosterGM(sender) then return end
+    if not IsInt(msg.v, 1, Now() + FUTURE_SLACK) then return end
+    local rec = LeadersRec(true)
+    if not rec or msg.v <= GMRev() then return end
+    rec.gv = msg.v
+    local ar, lr, dc, rc = CleanRules(msg.ar), CleanLootRules(msg.lr), CleanDiscord(msg.dc), CleanRecruitRules(msg.rc)
+    rec.ar, rec.arBy = ar, ar and sender or nil
+    rec.lr, rec.lrBy = lr, lr and sender or nil
+    rec.dc, rec.dcBy = dc, dc and sender or nil
+    rec.rc, rec.rcBy = rc, rc and sender or nil
     Recompute()
     ns:Fire("ATTENDANCE_RULES_CHANGED")
     ns:Fire("LOOT_RULES_CHANGED")
+    ns:Fire("DISCORD_CHANGED")
+    ns:Fire("RECRUIT_RULES_CHANGED")
 end
 
 -- 1.3.5: the attendance rules { o = on-time minutes, d = disconnect minutes } (the GM's, else 5 and 10).
@@ -1668,10 +1720,8 @@ function Guild:SetAttendanceRules(o, d)
     if not ar then return false, "the margins are whole minutes from 0 to 60" end
     local rec = LeadersRec(true)
     if not rec then return false, "your guild is not known yet" end
-    rec.rev = max(floor(Now()), rec.rev + 1)
     rec.ar, rec.arBy = ar, Util.PlayerKey()
-    rec.by = rec.by or Util.PlayerKey()
-    SendRLL()
+    SaveGMRecord(rec)
     ns:Fire("ATTENDANCE_RULES_CHANGED")
     return true
 end
@@ -1712,10 +1762,8 @@ function Guild:SetLootRules(lr)
     if not Guild:IsGM(Util.PlayerKey()) then return false, "only the Guild Master sets the loot rules" end
     local rec = LeadersRec(true)
     if not rec then return false, "your guild is not known yet" end
-    rec.rev = max(floor(Now()), rec.rev + 1)
     rec.lr, rec.lrBy = lr, Util.PlayerKey()
-    rec.by = rec.by or Util.PlayerKey()
-    SendRLL()
+    SaveGMRecord(rec)
     ns:Fire("LOOT_RULES_CHANGED")
     return true
 end
@@ -1746,10 +1794,8 @@ function Guild:SetRecruitRules(changes)
     if not Guild:IsGM(Util.PlayerKey()) then return false, "only the Guild Master sets the recruitment rules" end
     local rec = LeadersRec(true)
     if not rec then return false, "your guild is not known yet" end
-    rec.rev = max(floor(Now()), rec.rev + 1)
     rec.rc, rec.rcBy = rc, Util.PlayerKey()
-    rec.by = rec.by or Util.PlayerKey()
-    SendRLL()
+    SaveGMRecord(rec)
     ns:Fire("RECRUIT_RULES_CHANGED")
     return true
 end
@@ -1802,10 +1848,8 @@ function Guild:SetDiscord(patch)
             dc.t[id] = ch
         end
     end
-    rec.rev = max(floor(Now()), rec.rev + 1)
     rec.dc, rec.dcBy = CleanDiscord(dc), Util.PlayerKey()
-    rec.by = rec.by or Util.PlayerKey()
-    SendRLL()
+    SaveGMRecord(rec)
     ns:Fire("DISCORD_CHANGED")
     return true
 end
@@ -1830,9 +1874,25 @@ function Guild:OnRaidLeadersRevSeen(sender, rlr)
     if leadersSync then leadersSync.Seen(sender, rlr) end
 end
 
+-- The GM's record rides the HELLO the same way (gmr): only the GM serves it, only the GM is asked.
+local gmSync
+local function GMRevList()
+    return ns.DigestSync.RevList({
+        field = "gmr", order = 82, query = "GMQ", send = Send, limit = GMR_REPLY_LIMIT,
+        replyKey = "gmr-reply:", askKey = "gmq-ask:", queryKey = "gmq:",
+        rev = GMRev,
+        serve = function() return IsRosterGM(Util.PlayerKey()) end,
+        writer = IsRosterGM,
+        sendList = function(target) SendGMR(target) end,
+    })
+end
+
 local function ShareRaidLeadersAfterLogin()
     Util.RandomDelay(RLL_LOGIN_MIN, RLL_LOGIN_MAX, function()
         if Guild:IsOfficer(Util.PlayerKey()) and Guild:GetRaidLeadersRev() > 0 then SendRLL() end
+        -- (the GM's rules saved before they had a rev of their own: given one, so they reach the guild)
+        local rec = IsRosterGM(Util.PlayerKey()) and LeadersRec(false)
+        if rec and GMRev() == 0 and (rec.ar or rec.lr or rec.dc or rec.rc) then SaveGMRecord(rec) end
     end)
 end
 
@@ -1895,11 +1955,14 @@ function Guild:OnInit()
     end
     if ns.Comm and ns.Comm.Register then
         ns.Comm:Register("RLL", OnRaidLeaders)          -- Addendum J §62
+        ns.Comm:Register("GMR", OnGMRecord)             -- the GM's rules: from the GM only
         ns.Comm:Register("ACB", OnAccounts)             -- accounts: a player's characters share their roles
     end
     -- the HELLO's rlr (and RLQ), then its av: handled after every other module's field, as always
     leadersSync = LeadersRevList()
     leadersSync.Register()
+    gmSync = GMRevList()
+    gmSync.Register()
     local Sync = ns.Sync
     if Sync and Sync.RegisterHelloField then
         Sync:RegisterHelloField("av", 90, function() return Guild:GetAccountsHash() end,

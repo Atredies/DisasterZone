@@ -200,10 +200,7 @@ local function onlineCharacter(key)
 end
 
 local function whisper(key, recipe)
-    local name = (Ambiguate and Ambiguate(key, "none")) or ns.Util.ShortName(key)
-    local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
-    if not open then return end
-    open("/w " .. name .. " " .. (recipe and (P():GetRecipeLink(recipe) .. " ") or ""))
+    ns.Util.Whisper(key, recipe and (P():GetRecipeLink(recipe) .. " ") or "")
 end
 
 local function linkRecipe(recipe)
@@ -508,6 +505,9 @@ local function memberTooltip(owner, d)
             lines[#lines + 1] = { ("%s  %d / %d%s"):format(P():GetName(e.id), e.rank, e.max, spec and ("  ·  " .. spec) or ""), 1, 1, 1 }
         end
         if #d.profs == 0 then lines[#lines + 1] = { "No professions.", 0.6, 0.6, 0.6 } end
+    elseif versionOf(d.key) ~= "none" then
+        lines[#lines + 1] = { "Nothing shared yet: professions and gear arrive a minute or two after they log in.",
+                              0.6, 0.6, 0.6, wrap = true }
     else
         lines[#lines + 1] = { "Nothing shared: this character has not logged in with a DisasterZone that shares it.",
                               0.6, 0.6, 0.6, wrap = true }
@@ -572,7 +572,11 @@ local function rosterRows()
         if needle == "" or ns.Util.ShortName(key):lower():find(needle, 1, true) then
             local d = memberRow(key)
             if not d.profs then
-                if not state.prof then without[#without + 1] = d end
+                -- (heard with DisasterZone but nothing shared yet: their summary arrives a minute or two after they
+                -- log in, so they belong with the others, not under "Without DisasterZone")
+                if not state.prof then
+                    if versionOf(key) ~= "none" then with[#with + 1] = d else without[#without + 1] = d end
+                end
             elseif not state.prof then
                 with[#with + 1] = d
             else
@@ -1371,7 +1375,8 @@ local function updateNote(right, member)
     note.key = member
     local day = (date("%d %b", rec.rev):gsub("^0", ""))
     note.head:SetCount(notes:IsLocalOnly() and S:Wrap("WARN", "debug role: test notes, kept on this PC only")
-        or ("%s · %s"):format(rec.by and ns.Util.ShortName(rec.by) or "?", day))
+        or ("%s · %s%s"):format(rec.by and ns.Util.ShortName(rec.by) or "?", day,
+            rec.via and (" · relayed by " .. ns.Util.ShortName(rec.via)) or ""))
     local tw = cardWidth() - 2 * S.IN - 4
     note.text:SetWidth(tw)
     note.text:SetText(rec.text)

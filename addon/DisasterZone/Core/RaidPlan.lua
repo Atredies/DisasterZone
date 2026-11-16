@@ -39,8 +39,8 @@ if DisasterZoneBoot and DisasterZoneBoot.Run("Core/RaidPlan.lua", ...) then retu
 -- asks for the items that differ (RPW) and sends its own copy of them; items travel one per message (RPG).
 -- Records merge by rev (then by hash), so both sides converge. A version whose writer may not write it (see Trusted)
 -- never replaces one that shows, and only who names leaders changes a stored raid's leader: a hand-made message
--- can't delete, change or take over a raid on a client that holds it. (A copy passed on by someone else, RPG, can't
--- prove who wrote it: a client that never had the record takes it at its word.)
+-- can't delete, change or take over a raid on a client that holds it. A copy passed on by someone else (RPG) can't
+-- prove who wrote it: it is taken only from its writer or a raid planner (Vouched), else a planner's copy is asked for.
 local addonName, ns = ...
 
 local RaidPlan = ns:NewModule("RaidPlan")
@@ -305,6 +305,17 @@ local function Trusted(root, kind, rec)
     if not Entitled(root, kind, rec) then return false end
     if root.OK then root.OK[k] = true end
     return true
+end
+
+-- May this copy of a version be believed about who wrote it (rec.by)? A copy from its writer (another character of
+-- theirs; a live RPU, whose by must be its sender) or made here (via nil / me) is; one passed on by anybody else only
+-- when they could have written it themselves: a raid planner (who also names leaders), for a team also the guild
+-- council. Any guild member answers the login sync, and a made-up copy "by" a raid leader would otherwise show on a
+-- client that never had the record, or replace one it had. An unvouched copy waits (HoldBack) while a planner's copy
+-- is asked for (AskPlanner); a planner who logs in later sends theirs in the sync.
+local function Vouched(kind, rec, via)
+    if via == nil or Util.IsMe(via) or SamePlayer(via, rec.by) or CanAssignLeader(via) then return true end
+    return kind == "T" and CanTeams(via)
 end
 
 -- Do two versions of a raid record name the same leader, named by the same player, in their own fields (rl / rlb)?
@@ -986,6 +997,11 @@ local function MergeRecord(root, kind, rec, via)
         ns:Debug("RaidPlan: %s store full, %s dropped", kind, rec.id)
         return false
     end
+    if not Vouched(kind, rec, via) then
+        HoldBack(kind, rec, via)
+        AskPlanner((kind == "T" and "T:" or kind == "S" and "S:" or "O:") .. rec.id, rec.rev, via)
+        return false
+    end
     store[rec.id] = rec
     local p = pending[kind .. ":" .. rec.id]
     if p and not Newer(p.rec, rec) then pending[kind .. ":" .. rec.id] = nil end
@@ -998,7 +1014,7 @@ end
 
 -- The refused versions again, after a change of the guild's roles (or of who shares an account).
 local function RetryPending()
-    local root = next(pending) and Root(false)
+    local root = (next(pending) or next(Merge.pendingU)) and Root(false)
     if not root then return end
     local list = pending
     pending = {}
@@ -1006,6 +1022,8 @@ local function RetryPending()
     for _, p in pairs(list) do
         if MergeRecord(root, p.kind, p.rec, p.via) then changed = true end
     end
+    -- (and the relayed sign-ups nobody vouched for yet)
+    if Merge.RetrySignups(root) then changed = true end
     if changed then Changed() end
 end
 
@@ -1059,10 +1077,14 @@ function Lineup.MergeWait(root, tid, ln, key, e)
     return true
 end
 
--- A team's waitlists as relayed (RPG w): { [lineup id] = { [player] = entry } }. Returns true when one changed.
-function Lineup.MergeAll(tid, w)
+-- A team's waitlists as relayed (RPG w) by `via`: { [lineup id] = { [player] = entry } }. Returns true when one
+-- changed. 2026-11-09 (authority holes, round 2): an entry is written by its player (joining, leaving) or the GM and
+-- the guild council (RTW); a relayed one is taken only from its player, the council or a raid planner (who hold only
+-- entries taken that way), else a planner's copy of the team is asked for.
+function Lineup.MergeAll(tid, w, via)
     local root = Root(true)
     if not root then return false end
+    local trusted = via == nil or Util.IsMe(via) or CanTeams(via) or CanAssignLeader(via)
     local now, changed, nl = Now(), false, 0
     for ln, list in pairs(w) do
         nl = nl + 1
@@ -1074,7 +1096,11 @@ function Lineup.MergeAll(tid, w)
                 if n > Lineup.MAX_STORED then break end
                 local k = WireKey(key)
                 local c = k and Lineup.CleanWait(e, now)
-                if c and Lineup.MergeWait(root, tid, ln, k, c) then changed = true end
+                if c and not (trusted or SamePlayer(via, k)) then
+                    AskPlanner("T:" .. tid, "w:" .. k .. ":" .. tostring(c.rev), via)
+                elseif c and Lineup.MergeWait(root, tid, ln, k, c) then
+                    changed = true
+                end
             end
         end
     end
@@ -1367,15 +1393,77 @@ local function OnHostSignups(sender, msg, dist)
     if changed then Changed() end
 end
 
+-- 2026-11-09 (authority holes, round 2): may a sign-up of `key` for occurrence occId, passed on by `via`, be believed?
+-- A sign-up is written by its owner only (RPS; another character of theirs, RPA; Discord answers, the Discord host,
+-- RPH). A copy passed on (RPG) can't prove who wrote it, so it is taken only from who could have sent it themselves or
+-- holds only copies taken that way: the owner (any character of theirs), a raid planner, the raid's own leader, the
+-- Discord host. Every client stores only such copies, so a planner's copy is as good as the owner's. Anyone else's
+-- copy waits (Merge.pendingU) while the planner or the owner online is asked for theirs (an owner also sends their
+-- answers at login): any member answers the login sync, and could otherwise slip in, change or withdraw anyone's
+-- answer on a client that missed the real one.
+Merge.pendingU = {}                 -- ["occId|key"] = { o, k, s, via }: relayed sign-ups not taken for now
+Merge.askedOwner = {}               -- ["occId|key"] = rev: the owner was asked about this answer
+
+function Merge.SignupVouched(root, occId, key, via)
+    if via == nil or Util.IsMe(via) or SamePlayer(via, key) or CanAssignLeader(via) then return true end
+    local G = Guild()
+    if G and G.IsDiscordHost and G:IsDiscordHost(via) then return true end
+    local v = ResolveOcc(root, occId)
+    return v ~= nil and v.rl ~= nil and SamePlayer(via, v.rl)
+end
+
+-- A relayed sign-up nobody vouched for: kept to try again when the guild's roles change, and asked for from a raid
+-- planner and the owner (whoever is online; once per answer).
+function Merge.HoldSignup(root, occId, key, s, via)
+    local cur = root.U[occId] and root.U[occId][key]
+    if cur and not Newer(s, cur) then return end
+    local pk = occId .. "|" .. key
+    local p = Merge.pendingU[pk]
+    if not p or Newer(s, p.s) then
+        if p or CountTable(Merge.pendingU) < MAX_PENDING * 3 then
+            Merge.pendingU[pk] = { o = occId, k = key, s = s, via = via }
+        end
+    end
+    AskPlanner("O:" .. occId, "u:" .. key .. ":" .. s.rev, via)
+    if Merge.askedOwner[pk] == s.rev then return end
+    Merge.askedOwner[pk] = s.rev
+    local G = Guild()
+    for _, m in ipairs(G and G.GetOnlineMembers and G:GetOnlineMembers() or {}) do
+        if m ~= via and not Util.IsMe(m) and SamePlayer(m, key) then
+            Send({ t = "RPW", w = { "O:" .. occId } }, "WHISPER", m, "ctrl")
+            return
+        end
+    end
+end
+
+-- The relayed sign-ups held back, again (the guild's roles changed: a planner may be known now). Returns true when
+-- one was taken.
+function Merge.RetrySignups(root)
+    if not next(Merge.pendingU) then return false end
+    local changed = false
+    for pk, p in pairs(Merge.pendingU) do
+        local cur = root.U[p.o] and root.U[p.o][p.k]
+        if cur and not Newer(p.s, cur) then
+            Merge.pendingU[pk] = nil
+        elseif Merge.SignupVouched(root, p.o, p.k, p.via) then
+            Merge.pendingU[pk] = nil
+            if MergeSignup(root, p.o, p.k, p.s) then changed = true end
+        end
+    end
+    return changed
+end
+
 -- RPG: one item (a team, a series, or an occurrence's override + sign-ups), relayed by anyone in the guild. The
 -- records go through the same checks as a live edit (MergeRecord); who relays them only counts for a raid's leader.
+-- Sign-ups and waitlist entries are taken only from who vouches for them (Merge.SignupVouched, Lineup.MergeAll).
 local function OnGive(sender, msg, dist)
     if dist ~= "WHISPER" then return end
     local changed = false
     if msg.T ~= nil then
         changed = StoreRecord("T", msg.T, sender)
-        -- (1.3.2) its waitlists: { [lineup id] = { [player] = entry } }, taken at their word like relayed sign-ups
-        if type(msg.w) == "table" and type(msg.T) == "table" and IsId(msg.T.id) and Lineup.MergeAll(msg.T.id, msg.w) then
+        -- (1.3.2) its waitlists: { [lineup id] = { [player] = entry } }, from who vouches for them (Lineup.MergeAll)
+        if type(msg.w) == "table" and type(msg.T) == "table" and IsId(msg.T.id)
+            and Lineup.MergeAll(msg.T.id, msg.w, sender) then
             changed = true
         end
     elseif msg.S ~= nil then
@@ -1395,7 +1483,13 @@ local function OnGive(sender, msg, dist)
                 if n > MAX_SIGNUPS then break end
                 local k = WireKey(key)
                 local c = k and CleanSignup(s, now)
-                if c and MergeSignup(root, msg.o, k, c) then changed = true end
+                if c then
+                    if not Merge.SignupVouched(root, msg.o, k, sender) then
+                        Merge.HoldSignup(root, msg.o, k, c, sender)
+                    elseif MergeSignup(root, msg.o, k, c) then
+                        changed = true
+                    end
+                end
             end
         end
     end
@@ -1411,6 +1505,23 @@ end
 
 -- (teams and series first: the items go one per message behind a throttle, and occurrences need their series)
 SYNC.giveSort = Merge.GiveBefore
+
+-- (DigestSync's recheck waits while relayed records or sign-ups are held back and a planner or their owner was asked
+-- for them: another member's copy would be held back the same way)
+SYNC.waiting = function()
+    if not next(Merge.pendingU) and not next(pending) then return false end
+    local root = Root(false)
+    if not root then return false end
+    for _, p in pairs(pending) do
+        local cur = type(p.rec) == "table" and root[p.kind] and root[p.kind][p.rec.id]
+        if type(p.rec) == "table" and (not cur or Newer(p.rec, cur)) then return true end
+    end
+    for _, p in pairs(Merge.pendingU) do
+        local cur = root.U[p.o] and root.U[p.o][p.k]
+        if not cur or Newer(p.s, cur) then return true end
+    end
+    return false
+end
 
 ---------------------------------------------------------------------------
 -- Public API: reading
@@ -1671,6 +1782,32 @@ function RaidPlan:GetRaid(occId)
     return ResolveOcc(Root(false), occId)
 end
 
+-- When a raid is over: sign-ups close SIGNUP_CLOSE after its start; it is shown as past and left out of upcoming lists.
+-- The one definition for the core and the UI (the UI repeated 6 * 3600 thirteen times). Read through
+-- RaidPlan.SIGNUP_CLOSE, so a change (or a test) moves every check at once.
+RaidPlan.SIGNUP_CLOSE = SIGNUP_CLOSE
+
+-- The start time before which a raid is over, at `now` (default: the server time).
+function RaidPlan:OverCutoff(now)
+    return (now or Now()) - RaidPlan.SIGNUP_CLOSE
+end
+
+-- Is raid view `v` over (no more answers, shown as past)?
+function RaidPlan:IsOver(v, now)
+    return v.t < RaidPlan:OverCutoff(now)
+end
+
+-- Is a raid still on? "on", "cancelled" or "gone" (deleted, or no longer a trusted raid); nil while the guild's plan
+-- is not known yet (no guild key in the first seconds after a /reload), so a caller does not mistake that for gone.
+-- Invite & sort checks it on every pass (a cancel or delete from another planner left the run inviting).
+function RaidPlan:RaidStatus(occId)
+    local root = Root(false)
+    if not root then return nil end
+    local v = ResolveOcc(root, occId)
+    if not v then return "gone" end
+    return v.cancelled and "cancelled" or "on"
+end
+
 -- The members a locked raid takes sign-ups from { [key] = true }; nil when it is open to everyone (not locked, or
 -- locked without any team or invite).
 local function LockSet(v)
@@ -1839,12 +1976,23 @@ local function OnBlacklist(sender, msg, dist)
         if v > 0 then e.v = v end           -- (the same shape as mine before the two are hashed)
         local cur = rec.l[k]
         local cv = Merge.EntryRev(cur)
+        -- 2026-11-09 (authority holes, round 2): who blacklisted them (by) is the sender's word: from anyone but that
+        -- manager the entry keeps who passed it on (rec.rb[k], local), and the same entry from its writer clears it
+        local first = SamePlayer(e.by, sender)
         if v <= limit and v > (rec.x[k] or 0)
             and (not cur or v > cv or (v == cv and Util.Hash(e) > Util.Hash(cur)))
             and (cur or CountTable(rec.l) < MAX_BLACKLIST) then
             rec.l[k] = e
+            if type(rec.rb) ~= "table" then rec.rb = {} end
+            rec.rb[k] = not first and sender or nil
+            changed = true
+        elseif first and cur and type(rec.rb) == "table" and rec.rb[k] and Util.Hash(e) == Util.Hash(cur) then
+            rec.rb[k] = nil
             changed = true
         end
+    end
+    if type(rec.rb) == "table" then
+        for k in pairs(rec.rb) do if not rec.l[k] then rec.rb[k] = nil end end
     end
     Merge.TrimMarks(rec)
     -- what I hold that the sender lacks (a list before 1.3.3 can't tell: it is not answered)
@@ -1917,7 +2065,7 @@ function RaidPlan:GetBlacklistEntry(key)
     local hit = InSet(rec.l, key)
     local e = hit and rec.l[hit]
     if type(e) ~= "table" then return nil end
-    return { key = hit, reason = e.r, by = e.by, at = e.at }
+    return { key = hit, reason = e.r, by = e.by, at = e.at, via = type(rec.rb) == "table" and rec.rb[hit] or nil }
 end
 
 function RaidPlan:IsBlacklisted(key)
@@ -1929,7 +2077,10 @@ function RaidPlan:GetBlacklist()
     local out = {}
     local rec = BlacklistRec(false)
     for key, e in pairs(rec and rec.l or {}) do
-        if type(e) == "table" then out[#out + 1] = { key = key, reason = e.r, by = e.by, at = e.at } end
+        if type(e) == "table" then
+            out[#out + 1] = { key = key, reason = e.r, by = e.by, at = e.at,
+                              via = type(rec.rb) == "table" and rec.rb[key] or nil }
+        end
     end
     tsort(out, function(a, b) return a.key < b.key end)
     return out
@@ -1967,6 +2118,7 @@ function RaidPlan:SetBlacklisted(name, reason)
     if type(rec.x) ~= "table" then rec.x = {} end
     local v = max(Now(), Merge.EntryRev(cur) + 1, (rec.x[key] or 0) + 1)
     rec.l[key] = { r = r, by = Util.PlayerKey(), at = cur and cur.at or Now(), v = v }
+    if type(rec.rb) == "table" then rec.rb[key] = nil end
     rec.x[key] = nil
     SaveBlacklist(rec)
     return true, key
@@ -2463,7 +2615,7 @@ function RaidPlan:IsRaidInviteFrom(from)
     local me = Util.PlayerKey()
     if not me or type(from) ~= "string" or Util.IsMe(from) then return false end
     local now = Now()
-    for _, v in ipairs(self:GetRaids(now - SIGNUP_CLOSE, now + 2 * 3600)) do
+    for _, v in ipairs(self:GetRaids(self:OverCutoff(now), now + 2 * 3600)) do
         if not v.cancelled and (self:CanEditGroups(v, from) or self:CanManageRaid(v, from)) then
             local mine = self:GetMySignup(v.id)
             local grp = self:GetLayout(v)
@@ -2535,7 +2687,7 @@ function RaidPlan:SetRaidHidden(occId, on, scope)
             if not s or s.x then set[key] = nil end
         else
             local r = self:GetRaid(key)
-            if not r or r.t < now - SIGNUP_CLOSE then set[key] = nil end
+            if not r or self:IsOver(r, now) then set[key] = nil end
         end
     end
     if not next(set) then ns.db.raidplanHidden = nil end
@@ -3856,43 +4008,73 @@ end
 -- status: "A" | "T" | "B" | "X"; spec: index into ns.SPECS[the character's class] (nil = keep / last used); note:
 -- optional (false clears it); charKey: another character of my account to answer with (default: this one).
 -- Returns ok, err.
+-- One member answer, the rules both ways of answering share (SignUp and SignUpFor each had their own copy and had
+-- drifted; a Discord note over 40 characters was dropped silently): cancelled, over, status, the blocks, the
+-- character's class, the rev rules (newer than an answer the organizers removed, newer than my other characters'),
+-- spec and note. note: nil keeps the stored one, false clears it, too long refuses. opts carries what differs on
+-- purpose: request (a member outside a locked raid asks to join: both paths since 2026-11-13), dc (given in
+-- Discord), noClass (the refusal when the class is not known). Returns the clean record, or nil, err.
+local function BuildSignup(root, v, occId, key, status, spec, note, opts)
+    if v.cancelled then return nil, "This raid was cancelled." end
+    if RaidPlan:IsOver(v) then return nil, "This raid is over." end
+    if not STATUSES[status] then return nil, "invalid status" end
+    local block = RaidPlan:GetSignupBlock(v, key)
+    if block == "blacklist" then
+        return nil, "You can't sign up for raids. Contact an officer."
+    elseif block == "declined" then
+        return nil, "You were taken off this raid."
+    elseif block == "lock" then
+        if not opts.request then return nil, "This raid is locked to its teams and invited players." end
+        -- (outside a locked raid the answer is a request to join; private, or who runs it: invite instead)
+        if not RaidPlan:CanRequest(v, key) then
+            return nil, v.pv and "This raid is private to its teams and invited players. Ask a raid leader for an invite."
+                or "This raid is locked to its teams and invited players: add yourself with Invite."
+        end
+    elseif block == "level" then
+        return nil, strformat("This raid is for level %d characters.", v.ml)
+    end
+    local class = ClassOf(key)
+    if not class then return nil, opts.noClass end
+    local cur = root.U[occId] and root.U[occId][key]
+    local s = { st = status, rev = NextRev(cur), c = class, dc = opts.dc and 1 or nil }
+    -- an answer the organizers removed is older than the new one, whatever the clocks say
+    if v.rm and v.rm[key] and s.rev <= v.rm[key] then s.rev = v.rm[key] + 1 end
+    -- the newest answer of the player's characters is the one that counts: this one
+    for _, other in ipairs(Linked(key)) do
+        local o = other ~= key and root.U[occId] and root.U[occId][other]
+        if o and s.rev <= o.rev then s.rev = o.rev + 1 end
+    end
+    s.at = cur and (cur.at or cur.rev) or s.rev
+    if spec == nil then spec = (cur and cur.sp) or RaidPlan:GetLastSpec(key) end
+    if spec ~= nil then
+        if not IsInt(spec, 1, SpecCount(class)) then return nil, "invalid spec" end
+        s.sp = spec
+    end
+    if note == nil then
+        s.n = cur and cur.n or nil
+    elseif note ~= false and Util.Trim(tostring(note)) ~= "" then
+        s.n = CleanText(note, MAX_SIGNUP_NOTE)
+        if not s.n then return nil, "Notes are at most 40 characters." end
+    end
+    local clean = CleanSignup(s, Now())
+    if not clean then return nil, "could not save the sign-up" end
+    return clean
+end
+
 -- An answer a member gave in Discord, for their character `key` (Core/Bridge.lua, from a record the bot signed:
 -- every game that takes the record runs this, so nothing is broadcast; the guild sync carries it to the rest).
--- Same checks as their own sign-up (cancelled, over, blacklist, taken off, lock, level). Returns ok, err.
+-- Same rules as their own sign-up (BuildSignup): outside a locked raid the answer is a request to join that the raid
+-- leader accepts, as in game (owner's call, 2026-11-13). Returns ok, err.
 function RaidPlan:SignUpFor(occId, key, status, spec, note)
     local root = Root(true)
     key = WireKey(key)
     if not root or not key then return false, "unknown character" end
     local v = ResolveOcc(root, occId)
     if not v then return false, "unknown raid" end
-    if v.cancelled then return false, "This raid was cancelled." end
-    if v.t < Now() - SIGNUP_CLOSE then return false, "This raid is over." end
-    if not STATUSES[status] then return false, "invalid status" end
-    local block = self:GetSignupBlock(v, key)
-    if block == "blacklist" then return false, "You can't sign up for raids. Contact an officer."
-    elseif block == "declined" then return false, "You were taken off this raid."
-    elseif block == "lock" then return false, "This raid is locked to its teams and invited players."
-    elseif block == "level" then return false, strformat("This raid is for level %d characters.", v.ml)
-    end
-    local class = ClassOf(key)
-    if not class then return false, "That character is not in the guild roster." end
-    local cur = root.U[occId] and root.U[occId][key]
-    local s = { st = status, rev = NextRev(cur), c = class, dc = 1 }
-    if v.rm and v.rm[key] and s.rev <= v.rm[key] then s.rev = v.rm[key] + 1 end
-    for _, other in ipairs(Linked(key)) do
-        local o = other ~= key and root.U[occId] and root.U[occId][other]
-        if o and s.rev <= o.rev then s.rev = o.rev + 1 end
-    end
-    s.at = cur and (cur.at or cur.rev) or s.rev
-    if spec == nil then spec = cur and cur.sp or self:GetLastSpec(key) end
-    if spec ~= nil then
-        if not IsInt(spec, 1, SpecCount(class)) then return false, "invalid spec" end
-        s.sp = spec
-    end
-    if note == nil then s.n = cur and cur.n or nil
-    elseif Util.Trim(tostring(note)) ~= "" then s.n = CleanText(note, MAX_SIGNUP_NOTE) end
-    local clean = CleanSignup(s, Now())
-    if not clean or not MergeSignup(root, occId, key, clean) then return false, "could not save the sign-up" end
+    local clean, err = BuildSignup(root, v, occId, key, status, spec, note,
+        { dc = true, request = true, noClass = "That character is not in the guild roster." })
+    if not clean then return false, err end
+    if not MergeSignup(root, occId, key, clean) then return false, "could not save the sign-up" end
     Changed()
     return true
 end
@@ -3911,46 +4093,10 @@ function RaidPlan:SignUp(occId, status, spec, note, charKey)
     end
     local v = ResolveOcc(root, occId)
     if not v then return false, "unknown raid" end
-    if v.cancelled then return false, "This raid was cancelled." end
-    if v.t < Now() - SIGNUP_CLOSE then return false, "This raid is over." end
-    if not STATUSES[status] then return false, "invalid status" end
-    local block = self:GetSignupBlock(v, me)
-    if block == "blacklist" then
-        return false, "You can't sign up for raids. Contact an officer."
-    elseif block == "declined" then
-        return false, "You were taken off this raid."
-    elseif block == "lock" and not self:CanRequest(v, me) then
-        -- (outside a locked raid the answer is a request to join; private, or who runs it: invite instead)
-        return false, v.pv and "This raid is private to its teams and invited players. Ask a raid leader for an invite."
-            or "This raid is locked to its teams and invited players: add yourself with Invite."
-    elseif block == "level" then
-        return false, strformat("This raid is for level %d characters.", v.ml)
-    end
-    local class = ClassOf(me)
-    if not class then return false, "That character's class is not known yet; try again in a moment." end
-    local cur = root.U[occId] and root.U[occId][me]
-    local s = { st = status, rev = NextRev(cur), c = class }
-    -- an answer the organizers removed is older than the new one, whatever the clocks say
-    if v.rm and v.rm[me] and s.rev <= v.rm[me] then s.rev = v.rm[me] + 1 end
-    -- the newest answer of my characters is the one that counts: this one
-    for _, other in ipairs(self:GetMyCharacters()) do
-        local o = other ~= me and root.U[occId] and root.U[occId][other]
-        if o and s.rev <= o.rev then s.rev = o.rev + 1 end
-    end
-    s.at = cur and (cur.at or cur.rev) or s.rev
-    if spec == nil then spec = (cur and cur.sp) or self:GetLastSpec(me) end
-    if spec ~= nil then
-        if not IsInt(spec, 1, SpecCount(class)) then return false, "invalid spec" end
-        s.sp = spec
-    end
-    if note == nil then
-        s.n = cur and cur.n or nil
-    elseif note ~= false and Util.Trim(tostring(note)) ~= "" then
-        s.n = CleanText(note, MAX_SIGNUP_NOTE)
-        if not s.n then return false, "Notes are at most 40 characters." end
-    end
-    local clean = CleanSignup(s, Now())
-    if not clean or not MergeSignup(root, occId, me, clean) then return false, "could not save the sign-up" end
+    local clean, err = BuildSignup(root, v, occId, me, status, spec, note,
+        { request = true, noClass = "That character's class is not known yet; try again in a moment." })
+    if not clean then return false, err end
+    if not MergeSignup(root, occId, me, clean) then return false, "could not save the sign-up" end
     if clean.sp then
         local db = ns.db
         if type(db.raidplanSpec) ~= "table" then db.raidplanSpec = {} end
@@ -4017,10 +4163,10 @@ local function InUse(root, kind, rec, now)
     if kind == "T" then return true end
     if kind == "S" then
         if rec.x then return rec.rev >= now - TOMBSTONE_DAYS end
-        return not (rec.u and SeriesTime(rec, rec.u) < now - SIGNUP_CLOSE)
+        return not (rec.u and SeriesTime(rec, rec.u) < RaidPlan:OverCutoff(now))
     end
     local t = OccTime(root, rec.id)
-    if t then return t >= now - SIGNUP_CLOSE end
+    if t then return t >= RaidPlan:OverCutoff(now) end
     return rec.rev >= now - TOMBSTONE_DAYS
 end
 
