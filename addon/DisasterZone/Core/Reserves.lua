@@ -597,7 +597,11 @@ local function OnList(sender, msg, dist)
     local auth = G and G.GetAuthority and G:GetAuthority()
     -- (right after a /reload I may not know the authority yet, or take myself for it: the raid leader or an
     -- assistant is believed; only the authority's client sends a list)
-    if not (auth == sender or (cur and cur.by == sender) or LeadOrAssist(sender)) then
+    -- The holder counts only while no one else is known as the authority and they still have a loot role (2026-11-12:
+    -- a host who lost the lead to someone without DisasterZone could go on rewriting the list for good).
+    local holder = cur and cur.by == sender and (auth == nil or Util.IsMe(auth))
+        and not (G and G.IsCandidate and not G:IsCandidate(sender))
+    if not (auth == sender or holder or LeadOrAssist(sender)) then
         -- (a player who just joined may not know the raid's leader yet: kept a moment, taken once they do)
         pendingList = { sender = sender, msg = msg, at = GetTime() }
         return
