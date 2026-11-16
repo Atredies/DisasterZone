@@ -7,6 +7,13 @@ updated: 2026-11-16
 
 Newest first. Addon and tooling changes in this repo; the addon's own player-facing notes stay in its changelog.
 
+## 2026-11-16 - The download link, easy to copy
+
+`/dz download` (and `/dz link`) print the download link and open a box with it selected (Ctrl+C, then paste it to
+whoever needs DisasterZone); Settings > About has a "Download link" row with a **Copy link** button for the same box.
+One address for all of them and the game hub's "Get the game": `Util.DOWNLOAD_URL` (the newest release on this repo's
+Releases page). Test: `tests/boot-ui/test_download_link.py`.
+
 ## 2026-11-16 - Developer key, credits, own update key, upgrade check
 
 - **Developer = Arakis-Thunderstrike** by name and realm (`Util.DEV_KEY`, `Util.IsDevKey`): the feedback inbox and
