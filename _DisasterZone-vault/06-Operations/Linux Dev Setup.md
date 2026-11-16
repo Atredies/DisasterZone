@@ -18,23 +18,27 @@ export DISASTERZONE_ADDON_DIR=$PWD/../addon/DisasterZone           # default is 
 export DZ_SLOT_DIR=$PWD/.slots
 luaenv/bin/python tools/test_harness_selftest.py                 # 13/13
 luaenv/bin/python tools/check.py -q
-DZ_FORK=0 luaenv/bin/python tf_e/run_all.py --all -j 12          # ~6 min; the patch suites cannot fork
+luaenv/bin/python tf_e/run_all.py --all -j 8                    # ~5 min, forking on (the default)
+DZ_FORK=0 luaenv/bin/python tf_e/run_all.py patch/ --all -j 4   # the patch suites cannot fork
 ```
 
 - Never set `DZ_NATIVE_CACHE` under `/tmp`: it can grow to several GB in one run.
+- ⚠️ **Memory.** Keep forking on (`DZ_FORK=0` only for `patch/`): without it a suite keeps every case in one
+  process (`strategy/test_strategy_live` reaches ~5 GB, `votes/test_votes` ~3 GB). `scale/test_raid_night` needs
+  ~5 GB per shard even forked, and runs 4 shards side by side. On a 32 GB machine a full run at `-j 12` with
+  forking off fills RAM and swap, and the system OOM killer (systemd-oomd) then kills the whole terminal. Run long
+  test jobs in their own capped unit, so only the tests die if they run out:
+  `systemd-run --user --unit=dz-tests --collect -p MemoryMax=16G -p MemorySwapMax=1G <script>`.
 
-## Baseline on 1.5.5 (2026-11-16)
+## Baseline on 1.5.5
 
-`DZ_FORK=0 run_all --all` = **291 suites, 5 failed**, all upstream test bugs, none in the addon:
+**2026-11-16: 0 failed.** Forking on, every area but `patch/`: 270 suites, 0 failed. `DZ_FORK=0 --all`: 291 suites,
+0 failed. `tools/check.py -q`: 0 syntax errors, 39 style ("uniformity") errors carried from upstream. Any failure is
+a regression.
 
-| Suite | Why it fails |
-|---|---|
-| `events/test_edge_tab`, `events/test_kinds_ui_qa` | the UI audit loads Segoe UI from a Windows path |
-| `games/test_azeromon_craft`, `games/test_azeromon_fix_side` | Azeromon tests pinned to a time of day |
-| `sync/test_mixed_versions` (3 cases) | needs the private tag `release-1.4.0` |
-
-Without `DZ_FORK=0` the `patch/` suites fail as well (they cannot run forked). `tools/check.py -q`: 0 syntax errors,
-39 style ("uniformity") errors carried from upstream. Anything beyond this list is a regression.
+Before the Linux fixes (same day) 5 suites failed, all upstream test bugs: the UI audit loaded Segoe UI from a Windows
+path (`events/test_edge_tab`, `test_kinds_ui_qa`), two Azeromon suites depended on the time of day, and
+`sync/test_mixed_versions` needed the tag `release-1.4.0` with the addon source in it.
 
 ## Not in git
 

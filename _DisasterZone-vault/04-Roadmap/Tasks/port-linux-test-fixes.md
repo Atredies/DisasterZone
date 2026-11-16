@@ -1,9 +1,10 @@
 ---
 title: "Port Forever's test fixes (baseline to 0 failed)"
 tags: [task]
-status: 2 - Next up
+status: 5 - Done
 priority: p1
 effort: S
+completed: 2026-11-16
 updated: 2026-11-16
 ---
 
@@ -16,3 +17,8 @@ baseline. Forever's fixes for `test_boot`, `test_changelog`, `test_naxx` are not
 ## Done when
 
 `DZ_FORK=0 run_all.py --all` reports 0 failed on Linux on `dev`.
+
+## Done 2026-11-16
+
+The font fallback and noon pins came over as they were; `test_mixed_versions` needed its own fix (the release tree's
+`release-1.4.0` tag has no source). Forever's `ui_audit_states.py` fix did not apply: that broken merge is 1.6.0-only.
