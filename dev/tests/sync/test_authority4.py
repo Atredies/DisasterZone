@@ -272,5 +272,113 @@ def runs_a_run_passed_on_is_believed_only_from_its_owner():
     no_errors(w)
 
 
+# ------------------------------------------------------------------------------------------------------------------
+# 4. Professions
+# ------------------------------------------------------------------------------------------------------------------
+def _mb():
+    sys.path.insert(0, os.path.join(TESTS, "members"))
+    import mb_common
+    return mb_common
+
+
+PF_FORGE = """local key, to, bump, link, sb, tailor = ...
+local b = ns.DB:GuildBucket('prof', false, ns.Guild:GetGuildKey())
+local rec = b and b[key]
+local rev = (rec and rec.rev or GetServerTime()) + bump
+local p = tailor and { { 197, 300, 300, 0, rev - 10, 0, 0 } } or {}
+ns.Comm:Send({ t = 'PFB', l = { { k = key, v = rev, p = p, a = link, sb = sb } } }, to and 'WHISPER' or 'GUILD', to,
+  'member')"""
+
+
+def _prof_world():
+    mb = _mb()
+    w, c = mb.guild([("Gina", "PALADIN"), ("Alfa", "MAGE"), ("Bert", "ROGUE"), ("Cara", "PRIEST")])
+    mb.set_skills(c["Alfa"], [("Alchemy", 375, 375)])
+    w.tick(200)
+    return mb, w, c
+
+
+def _prof_of(cl, key):
+    return cl.eval_py("local key = ...; local b = ns.DB:GuildBucket('prof', false, ns.Guild:GetGuildKey()); "
+                      "local r = b and b[key]; if not r then return nil end; local p = {}; "
+                      "for id in pairs(r.p) do p[#p + 1] = id end; table.sort(p); "
+                      "return { p = p, a = r.a or false, sb = r.sb or false, rb = r.rb or false, rev = r.rev }", key)
+
+
+@case
+def professions_a_members_record_is_believed_only_from_them_or_an_officer():
+    mb, w, c = _prof_world()
+    K = mb.K
+    gina, alfa, bert, cara = c["Gina"], c["Alfa"], c["Bert"], c["Cara"]
+    assert _prof_of(cara, K("Alfa"))["p"] == [171]
+    # Bert rewrites Alfa's record on Cara's client: Tailoring, and Alfa an alt of Bert
+    bert.eval(PF_FORGE, K("Alfa"), K("Cara"), 100, K("Bert"), None, True)
+    w.tick(5)
+    got = _prof_of(cara, K("Alfa"))
+    assert got["p"] == [171] and got["a"] is False and got["rb"] is False, got
+    assert cara.eval("return ns.Professions:GetMain(...)", K("Alfa")) == K("Alfa")
+    # the officer-only main link: "set" by a member, or "by" Gina but passed on by Bert
+    for sb in (K("Bert"), K("Gina")):
+        bert.eval(PF_FORGE, K("Cara"), K("Alfa"), 200, K("Bert"), sb, False)
+        w.tick(3)
+        assert alfa.eval("return ns.Professions:GetMain(...)", K("Cara")) == K("Cara"), sb
+    # Alfa's own change is taken (a skill-up)
+    mb.set_skills(alfa, [("Alchemy", 375, 375), ("Herbalism", 300, 375)])
+    w.tick(60)
+    assert _prof_of(cara, K("Alfa"))["p"] == [171, 182]
+    no_errors(w)
+
+
+@case
+def professions_an_officers_main_link_is_taken_only_from_an_officer():
+    mb, w, c = _prof_world()
+    K = mb.K
+    gina, alfa, bert, cara = c["Gina"], c["Alfa"], c["Bert"], c["Cara"]
+    # Dora and Eli don't run DisasterZone
+    Client(w, "Dora", class_file="PRIEST", guild_rank=3)
+    Client(w, "Eli", class_file="PRIEST", guild_rank=3)
+    for cl in c.values():
+        cl.fire("GUILD_ROSTER_UPDATE")
+    w.tick(5)
+    bert.eval(PF_FORGE, K("Eli"), None, 0, K("Bert"), K("Gina"), False)
+    w.tick(5)
+    for cl in (alfa, cara):
+        assert cl.eval("return ns.Professions:GetMain(...)", K("Eli")) == K("Eli"), cl.name
+    assert gina.eval("return ns.Professions:SetMainFor(...)", K("Eli"), K("Dora")) is True
+    w.tick(10)
+    for cl in (alfa, bert, cara):
+        assert cl.eval("return ns.Professions:GetMain(...)", K("Eli")) == K("Dora"), cl.name
+    no_errors(w)
+
+
+@case
+def professions_a_member_who_was_offline_still_gets_the_guilds_professions():
+    mb, w, c = _prof_world()
+    K = mb.K
+    gina, alfa, bert, cara = c["Gina"], c["Alfa"], c["Bert"], c["Cara"]
+    gina.logout()
+    alfa.logout()
+    w.tick(3)
+    evie = mb.join(w, "Evie")
+    w.tick(200)
+    got = _prof_of(evie, K("Alfa"))
+    assert got and got["p"] == [171] and got["rb"] in (K("Bert"), K("Cara")), got
+    # the owner back online confirms it: the mark goes
+    alfa.login()
+    w.tick(200)
+    got = _prof_of(evie, K("Alfa"))
+    assert got["p"] == [171] and got["rb"] is False, got
+    # with the owner away again, an officer's copy confirms it
+    alfa.logout()
+    eli = mb.join(w, "Eli")
+    w.tick(200)
+    assert _prof_of(eli, K("Alfa"))["rb"] in (K("Bert"), K("Cara"), K("Evie")), _prof_of(eli, K("Alfa"))
+    gina.login()
+    w.tick(200)
+    got = _prof_of(eli, K("Alfa"))
+    assert got["p"] == [171] and got["rb"] is False, got
+    no_errors(w)
+
+
 if __name__ == "__main__":
     run_all()
