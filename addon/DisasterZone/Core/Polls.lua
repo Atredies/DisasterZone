@@ -566,6 +566,16 @@ local function Merge(root, kind, rec, live)
 end
 
 SYNC.clean, SYNC.merge, SYNC.state = CleanRecord, Merge, State
+
+-- 2026-11-09 (authority holes, round 2): a relayed record (PLG) names its writer (rec.by) in a field the sender
+-- controls. A change of a poll I hold, or a removal, is taken only from its writer (any of their characters) or from
+-- someone who may ask polls (their stores hold only versions taken that way; they answer a newcomer's sync first): a
+-- plain member can't pass on a made-up removal or edit "by" the asker. (A poll new to me and the answers still travel
+-- by their writer's word, so a member who was away catches up from anyone: see the Changelog's list.)
+SYNC.vouch = function(root, kind, rec, via)
+    if kind ~= "P" or SamePlayer(via, rec.by) or Polls:CanAsk(via) then return true end
+    return not (rec.del or root.P[rec.id] ~= nil)
+end
 -- demo mode: an answer must still fit its poll
 SYNC.demoCheck = function(st, kind, clean)
     if kind ~= "V" then return true end

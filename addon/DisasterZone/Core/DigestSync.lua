@@ -117,12 +117,21 @@ end
 
 -- A record from a member (live: their own change, checked against what is true now; else relayed from a store).
 -- Returns stored, the clean record.
-function Engine:StoreRecord(kind, r, live)
+function Engine:StoreRecord(kind, r, live, sender)
     if not self.kindSet[kind] then return false end
     local root = self:Root(true)
     if not root then return false end
     local rec = self.cfg.clean(kind, r)
     if not rec then return false end
+    -- 2026-11-09 (authority holes, round 2): a relayed record names its writer (rec.by) in a field the sender controls.
+    -- cfg.vouch(root, kind, rec, sender) says whether this sender may pass it on (its writer, or someone who could have
+    -- written it themselves): a record whose write needs a role is otherwise refused, and comes from a writer's store.
+    if not live and type(sender) == "string" and not Util.IsMe(sender) and self.cfg.vouch
+        and not self.cfg.vouch(root, kind, rec, sender) then
+        ns:Debug("%s: %s:%s from %s refused (relayed, not vouched for)", self.cfg.prefix or "sync", kind, tostring(rec.id),
+            sender)
+        return false, rec
+    end
     return self.cfg.merge(root, kind, rec, live), rec
 end
 
@@ -329,7 +338,7 @@ end
 
 -- StoreRecord for a record sender sent me (XXU / XXG); a refused copy of a grave gets the deletion back.
 function Engine:StoreFrom(sender, kind, r, live)
-    local ok, rec = self:StoreRecord(kind, r, live)
+    local ok, rec = self:StoreRecord(kind, r, live, sender)
     if not ok then self:ReturnGrave(kind, r, sender) end
     return ok, rec
 end

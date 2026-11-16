@@ -649,6 +649,25 @@ local function Merge(root, kind, rec, live)
 end
 
 SYNC.clean, SYNC.merge, SYNC.state = CleanRecord, Merge, State
+
+-- 2026-11-09 (authority holes, round 2): a relayed record (EVG) is taken at its writer's word (rec.by) only where
+-- Merge needs no more than that the writer owns it. Where it needs a role of the writer (a review, the season, a
+-- removal or cancel by a reviewer), the sender must be the writer or hold that role too (a reviewer's store holds only
+-- such versions): a plain member can't pass on a made-up deletion "by" an officer. (Records a member writes for
+-- themself still go by their word when relayed: see the Changelog's list.)
+SYNC.vouch = function(root, kind, rec, via)
+    if SamePlayer(via, rec.by) or Events:CanReview(via) then return true end
+    local cur = root[kind] and root[kind][rec.id]
+    if kind == "K" or kind == "C" then return false end
+    if kind == "D" then
+        return not (rec.del and cur and not cur.del and not SamePlayer(cur.by, rec.by))
+    elseif kind == "O" then
+        return not ((rec.del or rec.cancel) and cur and not cur.del and rec.by ~= (cur.h or cur.by))
+    elseif kind == "R" then
+        return not (rec.del and not (cur and cur.by == rec.by))
+    end
+    return true
+end
 -- a review asked for "this revision": the one this commit makes
 SYNC.prepare = function(kind, rec)
     if kind == "D" and type(rec.review) == "table" and rec.review.rev == true then rec.review.rev = rec.rev end

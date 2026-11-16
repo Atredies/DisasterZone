@@ -596,6 +596,17 @@ end
 SYNC.clean = function(kind, r) return CLEAN[kind](r) end
 SYNC.merge, SYNC.state = Merge, State
 
+-- 2026-11-09 (authority holes, round 2): every Prized record needs a role of its writer (rec.by, a field the sender
+-- controls): a relayed one (PZG) is taken only from its writer (any of their characters) or from someone who could
+-- have written it (their stores hold only versions taken that way; they answer a newcomer's sync first).
+SYNC.vouch = function(root, kind, rec, via)
+    if via == rec.by then return true end
+    local G = ns.Guild
+    if G and G.SameAccount and G:SameAccount(via, rec.by) then return true end
+    if kind == "G" then return Prized:CanRecordGiven(via) end
+    return Prized:CanEdit(via)
+end
+
 
 -- My own change: stored (merged like anyone's), then sent to the guild. Returns ok, the clean record.
 local function Commit(kind, rec) return sync:Commit(kind, rec) end

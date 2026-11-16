@@ -847,7 +847,19 @@ local function MergeRecord(root, kind, rec)
     return MergeFill(root, root.F[rec.id], rec)
 end
 
-local function StoreRecord(kind, r)
+-- 2026-11-09 (authority holes, round 2): may `via` pass on this record (SBG)? Its writer (rec.by) is a field the
+-- sender controls. An owner's own strategy goes by their word; a write that needs more (a collaborator's or a
+-- moderator's edit or deletion, a raid's fills) is taken only from its writer, the strategy's owner, a moderator or
+-- (fills) who may write that raid's fills: a plain member can't pass on a made-up deletion "by" the GM.
+local function Vouched(kind, rec, via)
+    if via == nil or Util.IsMe(via) or SamePlayer(via, rec.by) then return true end
+    if kind == "F" then return (CanWriteRaid(rec.o, via)) end
+    if IsOwnerKey(rec, rec.by) then return true end
+    return CanModerate(via) or IsOwnerKey(rec, via)
+end
+
+-- via: who sent it (nil: a live edit, whose writer is its sender, or my own).
+local function StoreRecord(kind, r, via)
     local root = Root(true)
     if not root then return false end
     local now = Now()
@@ -856,6 +868,10 @@ local function StoreRecord(kind, r)
     elseif kind == "F" then rec = CleanFill(r, now)
     end
     if not rec then return false end
+    if not Vouched(kind, rec, via) then
+        ns:Debug("Strategy: %s %s from %s refused (relayed, not vouched for)", kind, rec.id, via)
+        return false
+    end
     return MergeRecord(root, kind, rec)
 end
 
@@ -877,7 +893,7 @@ end
 -- SBG { k, r }: one item, relayed by anyone in the guild.
 local function OnGive(sender, msg, dist)
     if dist ~= "WHISPER" or (msg.k ~= "B" and msg.k ~= "F") or type(msg.r) ~= "table" then return end
-    if StoreRecord(msg.k, msg.r) then Changed() else sync:ReturnGrave(msg.k, msg.r, sender) end
+    if StoreRecord(msg.k, msg.r, sender) then Changed() else sync:ReturnGrave(msg.k, msg.r, sender) end
 end
 
 ---------------------------------------------------------------------------

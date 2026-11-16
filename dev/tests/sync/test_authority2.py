@@ -8,6 +8,9 @@ hand-made message, every other client refusing it (or naming who passed it on), 
      the writer. (The raid blacklist the same.)
   4. LootReserve mirror: only the group's leader, its master looter (LootReserve's own rule) or the raid's loot
      authority host a session that becomes my read-only list.
+  5. Relayed records that need a role of their writer: Events (season, reviews, removals), Polls (removals), Prized
+     (everything), Strategy (fills, a moderator's edit or deletion) are taken from a relay only when its sender could
+     have written them.
 
 Run: luaenv\\Scripts\\python.exe tests\\sync\\test_authority2.py [-k name]   (from dev)
 """
@@ -325,6 +328,97 @@ def the_master_looter_hosting_lootreserve_is_mirrored():
     for n in ("Alice", "Carol"):
         assert r[n].eval_py("return ns.Reserves:IsForeign()") == rkey("Hanna"), n
     r.w.assert_no_errors()
+
+
+# ------------------------------------------------------------------------------------------------------------------
+# 5. Relayed records that need a role of their writer
+# ------------------------------------------------------------------------------------------------------------------
+@case
+def a_plain_member_cannot_relay_the_gms_prized_item_removal():
+    w, c = guild()
+    gm, nala, aurel = c["Gina"], c["Nala"], c["Aurel"]
+    rec = gm.eval_py("local r = ns.Prized:Add({ 28766 }, {}); return r")
+    assert rec and rec["id"] == "28766", rec
+    w.tick(3)
+    assert aurel.eval_py("return ns.Prized:Get('28766') ~= nil") is True
+    forge = ("local gm, to = ...; local r = ns.DB:GuildBucket('prized', false).I['28766']; local c = {}; "
+             "for k, v in pairs(r) do c[k] = v end; c.del, c.rev, c.by = true, r.rev + 5, gm; "
+             "ns.Comm:Send({ t = 'PZG', k = 'I', r = c }, 'WHISPER', to, 'data')")
+    nala.eval(forge, key("Gina"), key("Aurel"))
+    w.tick(3)
+    assert aurel.eval_py("return ns.Prized:Get('28766') ~= nil") is True
+    # the GM's own copy of the same removal is taken
+    gm.eval(forge, key("Gina"), key("Aurel"))
+    w.tick(3)
+    assert aurel.eval_py("return ns.Prized:Get('28766') ~= nil") is False
+    no_errors(w)
+
+
+@case
+def a_plain_member_cannot_relay_a_season_or_a_poll_removal_by_the_gm():
+    w, c = guild()
+    gm, nala, aurel = c["Gina"], c["Nala"], c["Aurel"]
+    season = ("local gm, to = ...; ns.Comm:Send({ t = 'EVG', k = 'C', r = { id = 'season', by = gm, rev = GetServerTime(), "
+              "n = 'Forged season', from = 0, to = 0 } }, 'WHISPER', to, 'data')")
+
+    def season_name(cl):
+        return cl.eval("local r = ns.DB:GuildBucket('events', false); return r and r.C and r.C.season and r.C.season.n "
+                       "or false")
+
+    nala.eval(season, key("Gina"), key("Aurel"))
+    w.tick(3)
+    assert season_name(aurel) is False
+    gm.eval(season, key("Gina"), key("Aurel"))
+    w.tick(3)
+    assert season_name(aurel) == "Forged season"
+    # a poll the GM asks; Nala relays a removal "by" the GM
+    pid = gm.eval("local id, why = ns.Polls:Create({ q = 'Raid on Sunday?', k = 'yn', a = { { 'g' } }, "
+                  "cl = GetServerTime() + 3600, rv = 'vote', ch = true }); return id or ('ERR ' .. tostring(why))")
+    assert pid.startswith("p"), pid
+    w.tick(3)
+    assert aurel.eval_py("return ns.Polls:GetPoll(...) ~= nil", pid) is True
+    forge = ("local id, gm, to = ...; local r = ns.DB:GuildBucket('polls', false).P[id]; local c = {}; "
+             "for k, v in pairs(r) do c[k] = v end; c.del, c.rev, c.by = true, r.rev + 5, gm; "
+             "ns.Comm:Send({ t = 'PLG', k = 'P', r = c }, 'WHISPER', to, 'data')")
+    nala.eval(forge, pid, key("Gina"), key("Aurel"))
+    w.tick(3)
+    assert aurel.eval_py("return ns.Polls:GetPoll(...) ~= nil", pid) is True
+    # an officer (who may ask polls) passing on the GM's removal: taken
+    missy = c["Missy"]
+    missy.eval(forge, pid, key("Gina"), key("Aurel"))
+    w.tick(3)
+    assert aurel.eval_py("return ns.Polls:GetPoll(...) ~= nil", pid) is False
+    no_errors(w)
+
+
+@case
+def a_plain_member_cannot_relay_a_raids_strategy_fill():
+    sys.path.insert(0, os.path.join(TESTS, "strategy"))
+    from st_common import save_council, fill, get_fill
+    from rp_common import world as rp_world, create, now, DAY, K
+    w, c = rp_world(names=(("Gina", 0, "PALADIN"), ("Bob", 2, "MAGE"), ("Lee", 3, "WARRIOR"), ("Rita", 3, "PRIEST"),
+                           ("Sam", 3, "HUNTER")), council=("Bob",), planners=("Lee",))
+    lee, rita, sam = c["Lee"], c["Rita"], c["Sam"]
+    boss = "BlackTemple:Council"
+    sid = save_council(lee, "A plan")
+    occ = create(lee, i="bt", t=now(lee) + DAY)
+    w.tick(2)
+    assert fill(lee, occ, boss, sid, {"tk.1.1": K("Sam")})["ok"] is True
+    w.tick(3)
+    assert get_fill(sam, occ, boss)["a"] == {"tk.1.1": K("Sam")}
+    # Rita passes on Lee's fill with herself as the tank, "by" Lee
+    forge = ("local o, b, by, me, to = ...; for id, f in pairs(ns.DB:GuildBucket('strategy', false).F) do "
+             "if f.o == o and f.b == b then local c = {}; for k, v in pairs(f) do c[k] = v end; "
+             "c.rev, c.by, c.a = f.rev + 5, by, { ['tk.1.1'] = me }; "
+             "ns.Comm:Send({ t = 'SBG', k = 'F', r = c }, 'WHISPER', to, 'data') end end")
+    rita.eval(forge, occ, boss, K("Lee"), K("Rita"), K("Sam"))
+    w.tick(3)
+    assert get_fill(sam, occ, boss)["a"] == {"tk.1.1": K("Sam")}, get_fill(sam, occ, boss)
+    # the raid's planner passing on the same: taken
+    lee.eval(forge, occ, boss, K("Lee"), K("Rita"), K("Sam"))
+    w.tick(3)
+    assert get_fill(sam, occ, boss)["a"] == {"tk.1.1": K("Rita")}, get_fill(sam, occ, boss)
+    no_errors(w)
 
 
 if __name__ == "__main__":
