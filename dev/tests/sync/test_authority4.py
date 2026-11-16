@@ -146,5 +146,63 @@ def feedback_passed_on_by_a_member_reaches_the_developer_marked_until_the_author
     no_errors(w)
 
 
+# ------------------------------------------------------------------------------------------------------------------
+# 2. Live events
+# ------------------------------------------------------------------------------------------------------------------
+def _ev():
+    """(guild, cup, state, hosts_of, K) of tests/events/test_edge_live.py without importing its cases."""
+    import importlib.util
+    path = os.path.join(TESTS, "events", "test_edge_live.py")
+    src = open(path, encoding="utf-8").read()
+    src = src.replace("@case\n", "")
+    mod = type(sys)("ev_live_helpers")
+    mod.__file__ = path
+    sys.path.insert(0, os.path.join(TESTS, "events"))
+    exec(compile(src.replace('if __name__ == "__main__":', "if False:"), path, "exec"), mod.__dict__)
+    return mod
+
+
+EV_STATE = """local occ, host, chain, seqUp = ...
+local st = ns.EventBlocks.Copy(ns.EventLive:GetState(occ))
+st.seq = st.seq + seqUp; st.host = host
+return { t = 'EVS', o = occ, h = host, s = st, c = chain }"""
+
+
+@case
+def live_a_member_cannot_name_a_victim_as_host_nor_take_over_a_run_unseen():
+    ev = _ev()
+    w, cs = ev.guild(["Gina", "Bert", "Cora", "Dain", "Eve", "Fay"])
+    g, b, c, d, e, f = cs
+    K = ev.K
+    # Fay hears nothing of the run (she came online late, the states went past her); Dain still reaches her
+    w.addon_fault = lambda entry, rc: (False if rc.full_name == K("Fay") and entry["prefix"] in ("CDLe", "CDLf")
+                                       and entry["sender"] != K("Dain") else None)
+    occ = ev.cup(w, g, [b, c, e])
+    assert f.eval_py("return ns.EventLive:GetState(...)", occ) is None
+    # Dain "hands" the run to Fay in a chain from Gina: Fay's client must not go on with it
+    d.eval("local msg = (function(...) " + EV_STATE + " end)(...)\nns.Comm:Send(msg, 'WHISPER', select(5, ...), 'event')",
+           occ, K("Fay"), [K("Gina"), K("Dain"), K("Fay")], 50, K("Fay"))
+    w.tick(3)
+    assert not f.eval("return ns.EventLive:IsHostOf(...)", occ)
+    assert f.eval_py("return ns.EventLive:GetState(...)", occ) is None
+    # Dain (not signed up) goes on with it as its host, on Fay's client: not listened to
+    d.eval("local msg = (function(...) " + EV_STATE + " end)(...)\nns.Comm:Send(msg, 'WHISPER', select(5, ...), 'event')",
+           occ, K("Dain"), [K("Gina"), K("Dain")], 50, K("Fay"))
+    w.tick(3)
+    assert f.eval_py("return ns.EventLive:GetState(...)", occ) is None
+    # nobody else moved
+    assert ev.hosts_of(cs, occ) == ["Gina"]
+    for x in (b, c, d, e):
+        assert ev.state(x, occ)["host"] == K("Gina"), x.name
+    # the event's own host hands it to Fay, who never saw it: she goes on with it
+    w.addon_fault = None
+    assert g.eval("return ns.EventLive:HandOver(..., 'Fay-Thunderstrike')", occ)
+    w.tick(3)
+    assert ev.hosts_of(cs, occ) == ["Fay"]
+    for x in (b, c, e):
+        assert ev.state(x, occ)["host"] == K("Fay"), x.name
+    no_errors(w)
+
+
 if __name__ == "__main__":
     run_all()
