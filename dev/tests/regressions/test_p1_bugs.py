@@ -203,21 +203,21 @@ def a_creators_alt_edits_and_deletes_their_event_and_a_member_does_not():
 @case
 def the_debug_role_makes_only_me_an_attendance_reviewer():
     w = World()
-    t = Client(w, "Tsumil", guild_rank=4, class_file="PALADIN")
+    t = Client(w, "Arakis", guild_rank=4, class_file="PALADIN")
     sam = Client(w, "Sam", guild_rank=4, class_file="ROGUE")
     for x in (t, sam):
         x.load_addon()
     w.tick(3)
-    assert t.eval("return ns.Guild:IsAttendanceReviewer(...)", K("Tsumil")) is False
+    assert t.eval("return ns.Guild:IsAttendanceReviewer(...)", K("Arakis")) is False
     t.slash("/dz role officer")
     w.tick(0.5)
     assert t.eval("return ns.db.debugRole") == "officer"
-    assert t.eval("return ns.Guild:IsAttendanceReviewer(...)", K("Tsumil")) is True
+    assert t.eval("return ns.Guild:IsAttendanceReviewer(...)", K("Arakis")) is True
     assert t.eval("return ns.Guild:IsAttendanceReviewer(...)", K("Sam")) is False
-    # the other clients see Tsumil's real rank
-    assert sam.eval("return ns.Guild:IsAttendanceReviewer(...)", K("Tsumil")) is False
+    # the other clients see Arakis's real rank
+    assert sam.eval("return ns.Guild:IsAttendanceReviewer(...)", K("Arakis")) is False
     t.slash("/dz role off")
-    assert t.eval("return ns.Guild:IsAttendanceReviewer(...)", K("Tsumil")) is False
+    assert t.eval("return ns.Guild:IsAttendanceReviewer(...)", K("Arakis")) is False
     w.assert_no_errors()
 
 

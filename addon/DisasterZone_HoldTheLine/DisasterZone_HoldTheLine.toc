@@ -1,7 +1,7 @@
 ## Interface: 20506
 ## Title: |cffff8000Disaster|rZone · Hold the Line
 ## Notes: Fifteen minutes. One class. The whole Scourge.
-## Author: Casual Disaster
+## Author: Tsumil (original), Arakis
 ## Dependencies: DisasterZone
 ## X-DZ-Pack: holdtheline
 ## X-DZ-Kind: game

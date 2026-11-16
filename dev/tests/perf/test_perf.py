@@ -1,7 +1,7 @@
 """The developer's Performance page (Core/Perf.lua, UI/PerfUI.lua) and the garbage-free dispatcher (Core/Init.lua
 SafeCall).
 
-Covers: only Tsumil gets the page, its slash and the noting hooks (anybody else: none of it runs); memory samples
+Covers: only Arakis gets the page, its slash and the noting hooks (anybody else: none of it runs); memory samples
 every 10 s, Clean up now, garbage per minute from the samples; Measure: event and message handlers named by the file
 that registered them, a Util.After timer named by where it was scheduled, an OnUpdate set from a DisasterZone file wrapped while measuring and put back after, rows with
 calls, time and garbage; what holds memory: built pages with their widgets, saved data by section; the page itself
@@ -22,11 +22,11 @@ from _common import case, run_all, solo, no_errors, strip_codes  # noqa: E402
 
 
 def dev():
-    return solo("Tsumil", class_file="PALADIN", guild_rank=0)
+    return solo("Arakis", class_file="PALADIN", guild_rank=0)
 
 
 @case
-def only_tsumil_gets_the_page_and_its_hooks():
+def only_arakis_gets_the_page_and_its_hooks():
     w, c = solo("Bob")
     assert c.eval("return ns.Perf:IsDev()") is False
     assert c.eval("return ns.PerfNote == nil and ns.Perf.ticker == nil")
@@ -157,8 +157,8 @@ def measure_names_each_handler_by_its_file_and_weighs_it():
 def measure_names_who_sends_each_addon_message_and_what_i_send():
     sys.path.insert(0, os.path.join(TESTS, "raidplan"))
     from rp_common import world  # noqa: E402
-    w, c = world((("Gina", 0, "PALADIN"), ("Tsumil", 1, "MAGE"), ("Lee", 3, "WARRIOR")))
-    gina, me = c["Gina"], c["Tsumil"]
+    w, c = world((("Gina", 0, "PALADIN"), ("Arakis", 1, "MAGE"), ("Lee", 3, "WARRIOR")))
+    gina, me = c["Gina"], c["Arakis"]
     assert me.eval("return ns.Perf:Measure(6)") is True
     r = gina.eval_py("local ok, k = ns.RaidPlan:SetBlacklisted(...) return { ok = ok }", "Xavier-Thunderstrike")
     assert r["ok"] is True, r

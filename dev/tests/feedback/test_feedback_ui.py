@@ -54,7 +54,7 @@ def demo_mode_fills_the_page_and_saves_and_sends_nothing():
     assert [e for e in w.addon_log[start:] if e["prefix"] == "CDLb" and e["sender"] == K("Gina")] == []
     assert g.eval_py("local s = ns.db.feedback; local n = 0 for _, b in pairs(s or {}) do for _ in pairs(b.r or {}) do "
                      "n = n + 1 end end return n") == 0
-    assert g.eval("return ns.Feedback:Get(...).no ~= nil", id_), "demo: Tsumil has it after a moment"
+    assert g.eval("return ns.Feedback:Get(...).no ~= nil", id_), "demo: Arakis has it after a moment"
     # the demo's officer answer is news in the bell too (kept in memory by the notification center)
     g.eval("ns.Notify:Refresh('feedbackAnswer')")
     w.tick(0.2)
@@ -71,14 +71,14 @@ def demo_mode_fills_the_page_and_saves_and_sends_nothing():
 def real_feedback_keeps_arriving_while_demo_mode_is_on():
     w, c = standard()
     settle(w)
-    c["Tsumil"].slash("/dz demo on")
+    c["Arakis"].slash("/dz demo on")
     w.tick(1)
-    id_ = submit(c["Alfa"], "bug", "Something real while Tsumil looks at the demo.")
+    id_ = submit(c["Alfa"], "bug", "Something real while Arakis looks at the demo.")
     w.tick(5)
-    assert c["Tsumil"].eval_py("return ns.Feedback:Get(...)", id_) is None, "the demo store is what Tsumil sees"
-    c["Tsumil"].slash("/dz demo off")
+    assert c["Arakis"].eval_py("return ns.Feedback:Get(...)", id_) is None, "the demo store is what Arakis sees"
+    c["Arakis"].slash("/dz demo off")
     w.tick(3)
-    assert item(c["Tsumil"], id_)["no"] == 1, "it arrived and was numbered all the same"
+    assert item(c["Arakis"], id_)["no"] == 1, "it arrived and was numbered all the same"
     assert item(c["Alfa"], id_)["no"] == 1
     w.assert_no_errors()
 
@@ -152,7 +152,7 @@ def about_can_be_typed():
     a.eval("%s:GetFrame().edit:SetText('Show alts in one row.')" % SHEET)
     a.eval("%s:Send()" % SHEET)
     w.tick(3)
-    got = c["Tsumil"].eval_py("for _, v in ipairs(ns.Feedback:List()) do if v.text:find('alts') then return v.about end end")
+    got = c["Arakis"].eval_py("for _, v in ipairs(ns.Feedback:List()) do if v.text:find('alts') then return v.about end end")
     assert got == "Raids › Sign-ups", got
     w.assert_no_errors()
 
@@ -396,7 +396,7 @@ def a_bug_takes_a_pasted_error_and_the_item_opens_it_from_its_header():
     w.tick(3)
     assert a.eval_py("return %s:GetDraft().paste" % SHEET) is None, "sent: the paste is cleared"
     # the developer opens the item: an error icon left of the Status menu, it opens the error to read
-    t = c["Tsumil"]
+    t = c["Arakis"]
     id_ = K("Alfa") + "#1"
     open_page(t, w, "all")
     t.eval("ns.FeedbackUI:Select(...)", id_)

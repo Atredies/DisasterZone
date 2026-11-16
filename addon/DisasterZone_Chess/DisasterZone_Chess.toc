@@ -1,7 +1,7 @@
 ## Interface: 20506
 ## Title: |cffff8000Disaster|rZone · Karazhan Chess
 ## Notes: Play Medivh's echo, or a guildmate.
-## Author: Casual Disaster
+## Author: Tsumil (original), Arakis
 ## Dependencies: DisasterZone
 ## X-DZ-Pack: chess
 ## X-DZ-Kind: game

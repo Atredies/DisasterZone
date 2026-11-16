@@ -91,14 +91,29 @@ local function DB()
     return Boot.DB()
 end
 
+-- Public keys this addon never trusts: the original author's (tsumilo/DisasterZone-dev, up to 1.5.5). Their private
+-- halves are lost with a wiped machine (handover, November 2026), so an update or a bot record signed with one could
+-- come from anybody who has them. From 1.6.0 this addon has its own keys (dev/tools/release.py keygen, which refuses
+-- these too); while Core/PatchKey.lua holds one of these, in-game updates stay off. Core/Bridge.lua asks the same.
+local UNTRUSTED_ROOTS = {
+    ["9b703655eeb0f04ab4c8da1bdbc16cb8dbaa5fe4e0afd1dac7fa179dce7d605d"] = true,   -- the original in-game update key
+    ["93ed344536965f6d3a9fb3e10f8972406bf14af6284a1313f2a0da94ec6ff106"] = true,   -- the original Discord bot key
+}
+
+function Patch.IsUntrustedKey(k)
+    return type(k) == "table" and type(k.root) == "string" and UNTRUSTED_ROOTS[lower(k.root)] == true
+end
+
 local function Key()
     local k = ns.PatchKey
     if type(k) ~= "table" or type(k.seed) ~= "string" or #k.seed ~= 32 or type(k.root) ~= "string" or #k.root ~= 64
         or type(k.h) ~= "number" or k.h < 1 or k.h > 16 or k.h ~= floor(k.h) then
         return nil
     end
+    if Patch.IsUntrustedKey(k) then return nil end   -- updates stay off: nothing is downloaded, stored or applied
     return k
 end
+Patch._Key = Key   -- (tests)
 
 local function Available()
     return Boot ~= nil and Sha ~= nil and AceComm ~= nil and LibDeflate ~= nil and Key() ~= nil

@@ -1,7 +1,7 @@
 if DisasterZoneBoot and DisasterZoneBoot.Run("UI/Feedback.lua", ...) then return end -- DisasterZone: UI/Feedback.lua
 -- The Feedback page (an icon at the right of the strip, everyone): what the guild told the developer (Core/Feedback.lua),
 -- as in the approved mockup (dev/art/casc/feedback_mockup).
---   Banner: a loading screen behind "Tell Tsumil", one line on how it works, the guild's numbers (open, planned, shipped,
+--   Banner: a loading screen behind "Tell <developer>", one line on how it works, the guild's numbers (open, planned, shipped,
 --           from the guild), and the four tiles (Something broke / I have an idea / Change something / I love this):
 --           a click opens the form (UI/FeedbackSheet.lua) with that kind picked.
 --   Tabs:   Everything | Yours (a gold dot: news on my items) | Inbox n (staff: open, nobody planned or answered);

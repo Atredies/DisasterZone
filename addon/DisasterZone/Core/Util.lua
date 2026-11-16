@@ -30,6 +30,18 @@ function Util.GetPlayerRealm()
     return realm
 end
 
+-- The addon's developer (owner decision 2026-11-16, from 1.6.0; the original author's character before): a name key,
+-- the character's name and the realm without spaces. The only power tied to a name: the feedback "developer" badge
+-- and staff replies (Core/Feedback.lua), the Performance page on from the first file (Core/Perf.lua), the
+-- boss-learning review (Core/BossLearn.lua) and /dz role (Core/Guild.lua, my own client's view only). A name alone is
+-- weak proof: anyone could take it on another realm of the connected group, so the realm is part of the key.
+-- (Core/Perf.lua compares the same key at file time, before the realm helpers above are safe to call.)
+Util.DEV_KEY = "Arakis-Thunderstrike"
+
+function Util.IsDevKey(key)
+    return type(key) == "string" and key == Util.DEV_KEY
+end
+
 function Util.Trim(s)
     if type(s) ~= "string" then return s end
     return (strmatch(s, "^%s*(.-)%s*$"))

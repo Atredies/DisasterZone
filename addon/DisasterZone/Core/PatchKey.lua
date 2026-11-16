@@ -3,7 +3,7 @@ if DisasterZoneBoot and DisasterZoneBoot.Run("Core/PatchKey.lua", ...) then retu
 local addonName, ns = ...
 
 ns.PatchKey = {
-    seed = "64e4a22b3db0f56045a329c3aec1769d",
-    root = "9b703655eeb0f04ab4c8da1bdbc16cb8dbaa5fe4e0afd1dac7fa179dce7d605d",
+    seed = "f59c3e54099958b6664309324484093f",
+    root = "9b1288d405487f654f9d1c030baf8aa6bb202def27bdc44ff7b13e344290e1f5",
     h = 10,
 }

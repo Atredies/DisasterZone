@@ -1,5 +1,5 @@
 """Feedback to the developer (Core/Feedback.lua): members send bugs, ideas, changes and love; it travels through the
-guild until it reaches Tsumil, who numbers it ("Tsumil has it"); everyone sees it and may say "me too"; staff (the
+guild until it reaches Arakis, who numbers it ("Arakis has it"); everyone sees it and may say "me too"; staff (the
 developer, the Guild Master, officers) answer and set a status; the changelog's fb numbers make it "Fixed in".
 
 Run: luaenv\\Scripts\\python.exe tests\\feedback\\test_feedback.py [-k name]
@@ -33,8 +33,8 @@ def world(names, tick=3.0):
 
 
 def standard():
-    """Gina the GM, Olaf an officer, Tsumil the developer (a plain member), Alfa and Bert raiders."""
-    return world([("Gina", "PALADIN", 0), ("Olaf", "WARRIOR", 1), ("Tsumil", "PALADIN", 3),
+    """Gina the GM, Olaf an officer, Arakis the developer (a plain member), Alfa and Bert raiders."""
+    return world([("Gina", "PALADIN", 0), ("Olaf", "WARRIOR", 1), ("Arakis", "PALADIN", 3),
                   ("Alfa", "MAGE", 3), ("Bert", "ROGUE", 3)])
 
 
@@ -65,9 +65,9 @@ def a_member_s_bug_reaches_the_developer_who_numbers_it():
     id_ = submit(c["Alfa"], "bug", "The roll popup closed by itself when I entered combat.", about="Roll popup")
     assert id_ == K("Alfa") + "#1", id_
     w.tick(5, step=0.25)
-    seen = item(c["Tsumil"], id_)
+    seen = item(c["Arakis"], id_)
     assert seen and seen["no"] == 1 and seen["stage"] == 2, seen
-    # the number comes back to everyone: "Tsumil has it"
+    # the number comes back to everyone: "Arakis has it"
     for name in ("Alfa", "Bert", "Gina"):
         v = item(c[name], id_)
         assert v and v["no"] == 1 and v["stage"] == 2, (name, v)
@@ -78,18 +78,18 @@ def a_member_s_bug_reaches_the_developer_who_numbers_it():
 def feedback_written_while_the_developer_is_offline_arrives_at_the_next_login():
     w, c = standard()
     settle(w)
-    c["Tsumil"].logout()
+    c["Arakis"].logout()
     w.tick(5)
     id_ = submit(c["Alfa"], "idea", "Show who still needs a token on the boss tile.")
     w.tick(5)
     c["Alfa"].logout()          # the author is gone too: Bert carries it
     w.tick(5)
     assert item(c["Bert"], id_), "Bert holds it"
-    c["Tsumil"].login()
+    c["Arakis"].login()
     settle(w, 60)
-    v = item(c["Tsumil"], id_)
+    v = item(c["Arakis"], id_)
     assert v and v["no"] == 1, v
-    # Bert hears the number from Tsumil
+    # Bert hears the number from Arakis
     assert item(c["Bert"], id_)["no"] == 1
     w.assert_no_errors()
 
@@ -98,7 +98,7 @@ def feedback_written_while_the_developer_is_offline_arrives_at_the_next_login():
 def feedback_written_alone_spreads_when_the_guild_comes_online():
     w, c = standard()
     settle(w)
-    for name in ("Gina", "Olaf", "Tsumil", "Bert"):
+    for name in ("Gina", "Olaf", "Arakis", "Bert"):
         c[name].logout()
     w.tick(5)
     id_ = submit(c["Alfa"], "change", "The swing timer bar is too tall.")
@@ -107,9 +107,9 @@ def feedback_written_alone_spreads_when_the_guild_comes_online():
     settle(w, 60)
     assert item(c["Bert"], id_), "Bert got it at login"
     c["Alfa"].logout()
-    c["Tsumil"].login()
+    c["Arakis"].login()
     settle(w, 60)
-    assert item(c["Tsumil"], id_)["no"] == 1
+    assert item(c["Arakis"], id_)["no"] == 1
     w.assert_no_errors()
 
 
@@ -123,10 +123,10 @@ def me_too_counts_once_per_member_and_not_for_the_author():
         assert c[name].eval("return (%s:Vote(..., true))" % F, id_) is True
     assert c["Alfa"].eval("return select(2, %s:Vote(..., true))" % F, id_) == "it's your own"
     w.tick(3)
-    assert item(c["Tsumil"], id_)["votes"] == 2
+    assert item(c["Arakis"], id_)["votes"] == 2
     c["Bert"].eval("%s:Vote(..., false)" % F, id_)
     w.tick(3)
-    assert item(c["Tsumil"], id_)["votes"] == 1
+    assert item(c["Arakis"], id_)["votes"] == 1
     # "Yours" lists what I asked for and what I said me too to
     mine = c["Gina"].eval_py("local o = {} for _, v in ipairs(%s:List({ mine = true })) do o[#o + 1] = v.id end "
                              "return o" % F)
@@ -154,7 +154,7 @@ def staff_answer_and_set_a_status_members_can_not():
     assert c["Bert"].eval("return select(2, %s:Reply(..., 'me neither'))" % F, id_) == \
         "only the author and the officers answer here"
     w.tick(3)
-    assert item(c["Tsumil"], id_)["replies"] == 2
+    assert item(c["Arakis"], id_)["replies"] == 2
     w.assert_no_errors()
 
 
@@ -167,12 +167,12 @@ def a_status_passed_on_by_a_raider_is_refused():
     # Bert makes up a "planned" by the developer and sends it on as if he passed it on
     c["Bert"].eval("""
       local id = ...
-      local rec = { k = "s", i = id, a = "Tsumil-Thunderstrike", s = "planned", rv = GetServerTime() }
+      local rec = { k = "s", i = id, a = "Arakis-Thunderstrike", s = "planned", rv = GetServerTime() }
       ns.Comm:Send({ t = "FBN", r = { [id .. "!"] = rec } }, "GUILD", nil, "fb")""", id_)
     w.tick(3)
     assert item(c["Alfa"], id_)["state"] is False, item(c["Alfa"], id_)
     # the developer's own status is taken, and an officer may pass it on
-    c["Tsumil"].eval("%s:SetState(..., 'planned')" % F, id_)
+    c["Arakis"].eval("%s:SetState(..., 'planned')" % F, id_)
     w.tick(3)
     assert item(c["Alfa"], id_)["state"] == "planned"
     assert item(c["Alfa"], id_)["stage"] == 3
@@ -190,7 +190,7 @@ def withdrawn_items_leave_every_list():
     assert c["Alfa"].eval("return (%s:Withdraw(...))" % F, id_) is True
     w.tick(3)
     assert item(c["Bert"], id_) is None
-    assert item(c["Tsumil"], id_) is None
+    assert item(c["Arakis"], id_) is None
     w.assert_no_errors()
 
 
@@ -200,7 +200,7 @@ def the_changelog_number_makes_it_fixed_in_and_credits_the_author():
     settle(w)
     id_ = submit(c["Alfa"], "bug", "The roll popup closed by itself in combat.")
     w.tick(5)
-    no = item(c["Tsumil"], id_)["no"]
+    no = item(c["Arakis"], id_)["no"]
     for cl in c.values():
         cl.eval("""local no = ...
           local e
@@ -246,7 +246,7 @@ def lua_errors_in_disasterzone_are_kept_for_a_bug():
     assert len(errs) == 1 and "RollFrame" in errs[0]["m"], errs
     id_ = a.eval("local e = ns.Feedback:RecentError(); return (ns.Feedback:Submit('bug', 'It broke', { err = e }))")
     w.tick(3)
-    got = c["Tsumil"].eval_py("return ns.Feedback:Get(...).err", id_)
+    got = c["Arakis"].eval_py("return ns.Feedback:Get(...).err", id_)
     assert got and "RollFrame" in got["m"] and "in function" in got["s"], got
 
 
@@ -263,19 +263,19 @@ def a_pasted_error_travels_whole_and_plain():
     id_ = submit(c["Alfa"], "bug", "Members tab broke when sorting.", paste=PASTE + long_tail)
     assert "#" in id_, id_
     w.tick(5, step=0.25)
-    got = c["Tsumil"].eval_py("return ns.Feedback:Get(...).err", id_)
+    got = c["Arakis"].eval_py("return ns.Feedback:Get(...).err", id_)
     assert got, "the item and its error reach the developer"
     assert got["m"] == "1x DisasterZone/UI/Members.lua:233: attempt to compare nil with number", got["m"]
     assert "|c" not in got["p"] and "|r" not in got["p"], "colour codes are taken out"
     assert "    name = " in got["p"], "tabs become spaces"
     assert len(got["p"]) > 900 and "(*temporary) = 119" in got["p"], len(got["p"])
-    assert c["Tsumil"].eval("return ns.Feedback:ErrorText(ns.Feedback:Get(...))", id_) == got["p"]
+    assert c["Arakis"].eval("return ns.Feedback:ErrorText(ns.Feedback:Get(...))", id_) == got["p"]
     # past the cap it is cut, not refused; an idea never carries one
     big = submit(c["Bert"], "bug", "Huge error.", paste="x" * 5000)
     idea = submit(c["Bert"], "idea", "An idea.", paste=PASTE)
     w.tick(5, step=0.25)
-    assert len(c["Tsumil"].eval_py("return ns.Feedback:Get(...).err.p", big)) == 3000
-    assert c["Tsumil"].eval("return ns.Feedback:Get(...).err == nil", idea) is True
+    assert len(c["Arakis"].eval_py("return ns.Feedback:Get(...).err.p", big)) == 3000
+    assert c["Arakis"].eval("return ns.Feedback:Get(...).err == nil", idea) is True
     w.assert_no_errors()
 
 
@@ -290,8 +290,8 @@ def a_record_with_a_paste_too_long_is_refused():
                         e = { m = "boom", p = string.rep("y", size) } }
           ns.Comm:Send({ t = "FBN", r = { [a .. "#" .. n] = rec } }, "GUILD", nil, "fb")""", K("Alfa"), n, size)
     w.tick(3)
-    assert item(c["Tsumil"], K("Alfa") + "#7") is None
-    assert item(c["Tsumil"], K("Alfa") + "#8") is not None
+    assert item(c["Arakis"], K("Alfa") + "#7") is None
+    assert item(c["Arakis"], K("Alfa") + "#8") is not None
     w.assert_no_errors()
 
 
@@ -336,7 +336,7 @@ def a_lua_error_reports_itself_with_what_was_going_on():
     assert len(mine) == 1 and mine[0]["auto"], mine
     assert mine[0]["text"].startswith("Lua error: attempt to index field 'session' (a nil value)"), mine[0]["text"]
     assert mine[0]["about"] == "UI/RollFrame.lua:120", mine[0]["about"]
-    got = c["Tsumil"].eval_py("local v = %s:Get(...); return { no = v.no or false, auto = v.auto, err = v.err }" % F,
+    got = c["Arakis"].eval_py("local v = %s:Get(...); return { no = v.no or false, auto = v.auto, err = v.err }" % F,
                               mine[0]["id"])
     assert got["no"] and got["auto"], got
     assert got["err"]["m"] == ERR, got["err"]["m"]
@@ -351,7 +351,7 @@ def a_lua_error_reports_itself_with_what_was_going_on():
     # it happens again: no second report
     note(a)
     w.tick(REPORT_WAIT, step=0.5)
-    assert len(bugs(c["Tsumil"])) == 1
+    assert len(bugs(c["Arakis"])) == 1
     w.assert_no_errors()
 
 
@@ -363,7 +363,7 @@ def the_same_error_from_another_member_is_a_me_too():
     w.tick(REPORT_WAIT, step=0.5)
     note(c["Bert"], "1x DisasterZone/UI/RollFrame.lua:120: attempt to index field 'session' (a nil value)")
     w.tick(REPORT_WAIT, step=0.5)
-    seen = bugs(c["Tsumil"])
+    seen = bugs(c["Arakis"])
     assert len(seen) == 1 and seen[0]["author"] == K("Alfa") and seen[0]["votes"] == 1, seen
     assert last_error(c["Bert"])["how"] == "joined"
     assert popup(c["Bert"])["how"] == "joined", popup(c["Bert"])
@@ -374,7 +374,7 @@ def the_same_error_from_another_member_is_a_me_too():
 def the_developer_s_errors_and_a_switched_off_report_stay_out():
     w, c = standard()
     settle(w)
-    note(c["Tsumil"])                           # (BugSack shows them to the developer)
+    note(c["Arakis"])                           # (BugSack shows them to the developer)
     c["Bert"].eval("ns.DB:SetSetting('feedbackAuto', false)")
     note(c["Bert"])
     w.tick(REPORT_WAIT, step=0.5)
@@ -392,7 +392,7 @@ def three_reports_a_session_at_most():
     for i in range(4):
         note(c["Alfa"], "Interface/AddOns/DisasterZone/UI/X%d.lua:%d: boom" % (i, i + 1))
     w.tick(REPORT_WAIT, step=0.5)
-    assert len(bugs(c["Tsumil"])) == 3
+    assert len(bugs(c["Arakis"])) == 3
     # the fourth is left for the form
     assert last_error(c["Alfa"]) == {"f": False, "how": False, "x": "enough"}, last_error(c["Alfa"])
     assert popup(c["Alfa"])["how"] is False
@@ -405,7 +405,7 @@ def an_error_fixed_in_a_newer_release_is_not_reported_again():
     settle(w)
     note(c["Alfa"])
     w.tick(REPORT_WAIT, step=0.5)
-    no = c["Tsumil"].eval_py("return %s:List({ kind = 'bug' })[1].no" % F)
+    no = c["Arakis"].eval_py("return %s:List({ kind = 'bug' })[1].no" % F)
     c["Bert"].eval("""table.insert(ns.CHANGELOG, 1, { version = "99.0.0", sections = { { lines = {
         { "The roll popup no longer errors.", fb = { ... }, k = "bug" } } } } })
       ns:Fire("CONFIG_UPDATED")""", no)
@@ -413,7 +413,7 @@ def an_error_fixed_in_a_newer_release_is_not_reported_again():
     w.tick(REPORT_WAIT, step=0.5)
     assert last_error(c["Bert"])["how"] == "fixed"
     assert popup(c["Bert"])["text"] == "It's fixed in 99.0.0: update DisasterZone to get it.", popup(c["Bert"])
-    assert bugs(c["Tsumil"])[0]["votes"] == 0
+    assert bugs(c["Arakis"])[0]["votes"] == 0
     w.assert_no_errors()
 
 
@@ -430,7 +430,7 @@ def an_error_before_a_reload_is_reported_after_it_an_old_version_s_is_not():
     w.tick(5)
     a.login()
     w.tick(40 + REPORT_WAIT, step=0.5)          # (the login look, then the report)
-    seen = bugs(c["Tsumil"])
+    seen = bugs(c["Arakis"])
     assert [b["about"] for b in seen] == ["UI/RollFrame.lua:120"], seen
     w.assert_no_errors()
 
@@ -439,12 +439,12 @@ def an_error_before_a_reload_is_reported_after_it_an_old_version_s_is_not():
 def an_error_reports_itself_in_demo_mode_without_sending_it():
     w, c = standard()
     settle(w)
-    t = c["Tsumil"]
+    t = c["Arakis"]
     t.eval("ns.Demo:SetEnabled(true)")
     note(t)
     w.tick(REPORT_WAIT, step=0.5)
     demo = bugs(t)
-    assert any(b["auto"] and b["author"] == K("Tsumil") for b in demo), demo
+    assert any(b["auto"] and b["author"] == K("Arakis") for b in demo), demo
     t.eval("ns.Demo:SetEnabled(false)")
     assert bugs(t) == [] and bugs(c["Gina"]) == [], "demo reports stay in the demo list"
     w.assert_no_errors()
@@ -512,7 +512,7 @@ def our_errors_never_reach_the_screen_other_addons_errors_do():
 def the_developer_still_sees_theirs_unless_in_demo_mode():
     w, c = standard()
     settle(w)
-    t = c["Tsumil"]
+    t = c["Arakis"]
     t.eval("geterrorhandler()('Interface/AddOns/DisasterZone/UI/X.lua:1: boom')")
     assert "geterrorhandler()" in shown_where(t) and noted(t) == [], shown_where(t)
     t.eval("ns.Demo:SetEnabled(true)")
@@ -578,7 +578,7 @@ reg:RegisterCallback("BugGrabber.BugGrabbed", function(_, id) SACK.shown = SACK.
 def with_bugsack_ours_leave_its_list_and_alert_theirs_stay():
     w = World()
     c = {}
-    for name, cls, rank in (("Gina", "PALADIN", 0), ("Tsumil", "PALADIN", 3), ("Alfa", "MAGE", 3)):
+    for name, cls, rank in (("Gina", "PALADIN", 0), ("Arakis", "PALADIN", 3), ("Alfa", "MAGE", 3)):
         c[name] = Client(w, name, class_file=cls, guild_rank=rank)
     a = c["Alfa"]
     a.eval(BUGSACK_WORLD)

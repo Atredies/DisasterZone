@@ -3848,6 +3848,8 @@ function SettingsUI:BuildAbout(sec)
     local vrow = self:Row(sec, "", "")
     self.aboutText = vrow.title
     self.aboutPeers = vrow.desc
+    -- (credits: the original author built DisasterZone and handed it over in November 2026; owner decision 2026-11-16)
+    self:Row(sec, "Credits", "Created by Tsumil (tsumilo on GitHub). Maintained by Arakis since 1.6.0.")
     local srow = self:Row(sec, "BiS list sharing", "")
     self.aboutSync = srow.desc
     local syncBtn = ns.UI:CreateSleekButton(srow, "Request sync", 112, 22, function()

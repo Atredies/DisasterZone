@@ -8,7 +8,7 @@ their caps, alerts that never fired, phase times, kill and duration), a short wi
 an error in the recorder (the alerts carry on, recording stops, one debug line), nothing learned changing a running
 pull, the learning rules (3 clean pulls, outliers, p10/p90, the clamp, too wide, far, fixed, phase-relative samples),
 sharing with the guild (one summary per pull, its size and delay, suppression, the union of observations, nothing
-sent in a fight, every odd or old message dropped), the storage caps, the developer's review (only for Tsumil, Use
+sent in a fight, every odd or old message dropped), the storage caps, the developer's review (only for Arakis, Use
 applies the new id on that client only), the Settings rows, the boss pills and page, Try it's recording line and
 made-up note (nothing saved or sent), the pop-up after a pull, the data's hook-driven bars marked learn = false,
 and the dev tool against a fixture SavedVariables file.
@@ -693,11 +693,11 @@ def page_texts(c):
 
 @case
 def the_review_is_the_developers_only():
-    for name in ("Alice", "Tsumil"):
+    for name in ("Alice", "Arakis"):
         w, c = solo(name, class_file="PALADIN", guild_rank=0)
         c.eval("ns.DB:SetSetting('bossmods.on', true)")
         seed_review(c)
-        dev = name == "Tsumil"
+        dev = name == "Arakis"
         assert c.eval("return ns.BossLearn:IsDev()") is dev
         sug = c.eval_py("return ns.BossLearn:Suggestions('GruulsLair:Gruul')")
         kinds = sorted(s["kind"] for s in (sug or []))
@@ -816,7 +816,7 @@ def try_it_shows_the_recording_line_and_a_made_up_note():
     assert summaries(w) == []
     assert c.eval("return ns.BossLearnUI:RecLine(ns.BossModUI.tryLearn) == nil") is True
     # (the developer also sees the made-up unknown cast once the pull is 10.5 s in)
-    w2, d = solo("Tsumil", class_file="PALADIN", guild_rank=0)
+    w2, d = solo("Arakis", class_file="PALADIN", guild_rank=0)
     d.eval("ns.DB:SetSetting('bossmods.on', true); ns.BossModUI:TryIt()")
     w2.tick(5 + 11)
     rl = d.eval_py("return ns.BossLearnUI:RecLine(ns.BossModUI.tryLearn)")

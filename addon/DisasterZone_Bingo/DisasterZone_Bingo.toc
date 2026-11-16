@@ -1,7 +1,7 @@
 ## Interface: 20506
 ## Title: |cffff8000Disaster|rZone · Council Bingo
 ## Notes: Squares fill in as the raid happens.
-## Author: Casual Disaster
+## Author: Tsumil (original), Arakis
 ## Dependencies: DisasterZone
 ## X-DZ-Pack: bingo
 ## X-DZ-Kind: game

@@ -492,18 +492,16 @@ end
 local Principals, IsGMKey, AddAlts, InvalidateAccounts, NoteOwnCharacter
 
 ---------------------------------------------------------------------------
--- Debug roles (for the addon's developer only): the character named DEBUG_CHAR can pretend to have another role with
+-- Debug roles (for the addon's developer only): the developer's character (Util.DEV_KEY: name and realm) can pretend to have another role with
 -- /dz role, to look at the addon as a GM, officer, council member, raid leader or plain raider. It only changes what
 -- MY client thinks my role is (UI and my own checks); every other client still checks my real rank and lists, so
 -- nothing I'm not really entitled to is sent to me. Saved in db.debugRole.
 ---------------------------------------------------------------------------
 
-local DEBUG_CHAR = "Tsumil"
 local DEBUG_ROLES = { gm = true, officer = true, council = true, raidleader = true, raider = true }
 
 local function DebugAllowed()
-    local name = UnitName and UnitName("player")
-    return name == DEBUG_CHAR
+    return Util.IsDevKey(Util.PlayerKey())
 end
 
 -- My pretend role, or nil.

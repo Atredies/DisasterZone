@@ -286,6 +286,31 @@ def build_info_lua(bid, pack, stamps=None):
             "DisasterZoneBuild = {\n    id = \"%s\",\n    assetPack = %d,\n%s}\n" % (bid, pack, rows))
 
 
+# The original author's public keys (up to 1.5.5): their private halves are lost (handover, November 2026), so a
+# release or update carrying one could be signed by anybody who has them. Core/Patch.lua refuses them in game as well.
+UNTRUSTED_ROOTS = {
+    "9b703655eeb0f04ab4c8da1bdbc16cb8dbaa5fe4e0afd1dac7fa179dce7d605d": "the original in-game update key",
+    "93ed344536965f6d3a9fb3e10f8972406bf14af6284a1313f2a0da94ec6ff106": "the original Discord bot key",
+}
+KEY_ROOT_RE = re.compile(r'root\s*=\s*"([0-9a-fA-F]{64})"')
+
+
+def refuse_untrusted(root, what):
+    if root and root.lower() in UNTRUSTED_ROOTS:
+        raise ReleaseError("%s holds %s (root %s...). Its private half is not ours: run 'release.py keygen' on ONE "
+                           "machine and release with that key." % (what, UNTRUSTED_ROOTS[root.lower()], root[:8]))
+
+
+def patch_key_root(addon_dir):
+    """The root in Core/PatchKey.lua, or None."""
+    path = os.path.join(addon_dir, "Core", "PatchKey.lua")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        m = KEY_ROOT_RE.search(fh.read())
+    return m.group(1) if m else None
+
+
 def patch_key_lua(key):
     return ('if DisasterZoneBoot and DisasterZoneBoot.Run("Core/PatchKey.lua", ...) then return end '
             "-- DisasterZone: public key in-game updates are verified with (written by dev/tools/release.py keygen).\n"
@@ -525,6 +550,7 @@ def cmd_full(args):
         raise ReleaseError("not ready for a release:\n  " + "\n  ".join(problems))
     if guard_state(ADDON_DIR, "Core/PatchKey.lua") != "ok":
         raise ReleaseError("Core/PatchKey.lua is missing: run 'release.py keygen' first")
+    refuse_untrusted(patch_key_root(ADDON_DIR), "Core/PatchKey.lua")
     version = parse_toc(ADDON_DIR)[0].get("version", "0")
     os.makedirs(DIST, exist_ok=True)
     os.makedirs(RELEASES, exist_ok=True)
@@ -862,6 +888,7 @@ def cmd_patch(args):
     if not os.path.exists(KEY_PATH):
         raise ReleaseError("no signing key: run 'release.py keygen' first")
     key = patchlib.load_key(KEY_PATH)
+    refuse_untrusted(key.get("root"), KEY_PATH)
     base = load_base()
     log = patch_log()
     seq = max([key.get("next", 1)] + [p["seq"] + 1 for p in log])
@@ -976,6 +1003,7 @@ def cmd_selftest(args):
     if not os.path.exists(KEY_PATH):
         raise ReleaseError("no signing key: run 'release.py keygen' first")
     key = patchlib.load_key(KEY_PATH)
+    refuse_untrusted(key.get("root"), KEY_PATH)
     log = patch_log()
     seq = max([key.get("next", 1)] + [p["seq"] + 1 for p in log])
     if seq >= (1 << key["height"]):
@@ -1056,6 +1084,7 @@ def cmd_keygen(args):
     os.makedirs(os.path.dirname(KEY_PATH), exist_ok=True)
     print("generating %d one-time keys..." % (1 << args.height))
     key = patchlib.keygen(args.height)
+    refuse_untrusted(key.get("root"), "the new key")
     patchlib.save_key(KEY_PATH, key)
     _put(os.path.join(ADDON_DIR, "Core", "PatchKey.lua"), patch_key_lua(key).encode("utf-8"))
     print("private key: %s  (back this file up; never share or commit it)" % KEY_PATH)

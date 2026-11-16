@@ -22,10 +22,10 @@ def K(name):
 
 
 def standard():
-    """Gina the GM, Olaf an officer, Tsumil the developer (a plain member), Alfa and Bert raiders; settled."""
+    """Gina the GM, Olaf an officer, Arakis the developer (a plain member), Alfa and Bert raiders; settled."""
     w = World()
     c = {}
-    for name, cls, rank in [("Gina", "PALADIN", 0), ("Olaf", "WARRIOR", 1), ("Tsumil", "PALADIN", 3),
+    for name, cls, rank in [("Gina", "PALADIN", 0), ("Olaf", "WARRIOR", 1), ("Arakis", "PALADIN", 3),
                             ("Alfa", "MAGE", 3), ("Bert", "ROGUE", 3)]:
         c[name] = Client(w, name, class_file=cls, guild_rank=rank)
     for x in c.values():
@@ -59,7 +59,7 @@ def setup_plan(w, c):
     a = submit(c["Alfa"], "idea", "Auto-sell junk at vendors. And repair.")
     b = submit(c["Bert"], "bug", "Execute shows before it is learned.")
     w.tick(10, step=0.25)
-    t = c["Tsumil"]
+    t = c["Arakis"]
     assert ok(t, P + ":SetRelease('1.9.1', { th = 'Quality of life', bg = 8, pub = true })")["ok"]
     assert ok(t, P + ":SetRelease('1.9.2', { th = 'Secret stuff', bg = 24 })")["ok"]
     assert ok(t, P + ":Place(..., '1.9.1')", a)["ok"]
@@ -75,7 +75,7 @@ def setup_plan(w, c):
 def the_developer_plans_officers_see_it_and_the_guild_sees_coming_next():
     w, c = standard()
     a, b = setup_plan(w, c)
-    t = c["Tsumil"]
+    t = c["Arakis"]
     assert sorted(columns(t, "1.9.1")) == sorted([a, "D-1"]), columns(t, "1.9.1")
     assert columns(t, "1.9.2") == [b]
     assert t.eval("return (%s:Load('1.9.1'))" % P) == 15        # M 3 + XL 12
@@ -117,7 +117,7 @@ def a_member_who_logs_in_later_asks_staff_for_coming_next():
     c["Bert"].logout()
     w.tick(5)
     # while Bert is away, his bug joins the release the guild sees
-    assert ok(c["Tsumil"], P + ":Place(..., '1.9.1')", b)["ok"]
+    assert ok(c["Arakis"], P + ":Place(..., '1.9.1')", b)["ok"]
     w.tick(10, step=0.25)
     c["Bert"].login()
     w.tick(90, step=0.25)
@@ -126,7 +126,7 @@ def a_member_who_logs_in_later_asks_staff_for_coming_next():
     # an officer who was away gets the whole plan
     c["Olaf"].logout()
     w.tick(5)
-    assert ok(c["Tsumil"], P + ":SetNote(..., 'hook MERCHANT_SHOW')", a)["ok"]
+    assert ok(c["Arakis"], P + ":SetNote(..., 'hook MERCHANT_SHOW')", a)["ok"]
     w.tick(10, step=0.25)
     c["Olaf"].login()
     w.tick(90, step=0.25)
@@ -138,7 +138,7 @@ def a_member_who_logs_in_later_asks_staff_for_coming_next():
 def the_dev_kit_file_merges_and_the_newer_edit_wins():
     w, c = standard()
     a, b = setup_plan(w, c)
-    t = c["Tsumil"]
+    t = c["Arakis"]
     gk = t.eval("return ns.Util.GuildKey()")
     now = t.eval("return ns.Util.Now()")
     # the file: a newer size for a, an older place for b (the game's newer one stays), a new release and dev item
@@ -163,7 +163,7 @@ def the_dev_kit_file_merges_and_the_newer_edit_wins():
 def release_check_and_marking_a_release_released():
     w, c = standard()
     a, b = setup_plan(w, c)
-    t = c["Tsumil"]
+    t = c["Arakis"]
     no = t.eval("return %s:Get(...).no" % F, a)
     # a's number in this release's changelog: shipped; the dev item not yet
     t.eval("table.insert(ns.CHANGELOG, 1, { version = '1.9.1', sections = { { lines = { "
