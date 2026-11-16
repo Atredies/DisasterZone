@@ -269,12 +269,22 @@ end
 
 -- How a roll for itemID is decided under reserves: "s", keys (the reservers in the group; one key = theirs, no
 -- roll), "g" (held for the guild), "o" (up for grabs); nil when reserves are not the loot method.
-function Reserves:Decide(itemID)
+-- taken (optional): { [key] = true }, the players who got another copy of the item from the same drop (Roll's
+-- CopyClaims). A reservation is one copy (a player reserves an item once), so they are no reservers of this copy;
+-- when no reserver is left the copy is up for grabs.
+function Reserves:Decide(itemID, taken)
     itemID = tonumber(itemID)
     if not itemID or not self:IsLootMethod() then return nil end
     local L = List()
     if IsHR(L, itemID) then return "g" end
     local keys = self:Reservers(itemID, true)
+    if type(taken) == "table" then
+        local left = {}
+        for _, key in ipairs(keys) do
+            if not taken[key] then left[#left + 1] = key end
+        end
+        keys = left
+    end
     if #keys > 0 then return "s", keys end
     return "o"
 end

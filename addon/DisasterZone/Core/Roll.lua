@@ -173,11 +173,17 @@ end
 -- no roll), "g" (held for the guild: the loot council among guild members), "o" (up for grabs: everyone rolls), nil
 -- (reserves are not the loot method). Decided by the starter when the roll opens (RS rv / rk). ses.force = "o": the
 -- council opened a guild item to everyone (Roll:StartUpForGrabs).
+-- Two copies of an item in one drop: each copy uses up one reservation. The players who got (or, on a closed roll, are
+-- about to get) another copy of it from this drop are no reservers of this copy (CopyClaims); when nobody is left,
+-- the copy is up for grabs. (DisasterZone 1.5.5 / 1.6.0 rolled every copy among all reservers again: one reserver got
+-- both copies.)
+local CopyClaims   -- forward declaration (Results section)
+
 local function ReserveDecision(ses)
     if ses.party then return nil end
     local R = ns.Reserves
     if not (R and R.Decide) then return nil end
-    local kind, keys = R:Decide(ses.i)
+    local kind, keys = R:Decide(ses.i, CopyClaims(ses))
     if kind and ses.force == "o" then return "o" end
     return kind, keys
 end
@@ -1018,6 +1024,62 @@ local function BuildResults(ses)
     end
     local solo = (ses.rv == "s" and type(ses.rk) == "table" and #ses.rk == 1) and ses.rk[1] or nil
     return Roll:RankRows(out, { plain = plain, mat = mat, prized = przRec, solo = solo })
+end
+
+-- Who has the other copies of itemID from drop s (copy c is the one asked about): the winners of their awarded
+-- rolls, the one suggestion of a closed roll nobody awarded yet (a reserves roll names its reserver at once, the
+-- award follows), and the loot log's awards of the item for that drop (the Award menu). { [key] = true } or nil.
+-- Only for a drop with an identity (s ~= ""): two rolls without one are not copies of one drop.
+local function ClaimsOf(itemID, s, c, demo)
+    if type(s) ~= "string" or s == "" then return nil end
+    local set
+    local function Add(key)
+        if type(key) == "string" then
+            set = set or {}
+            set[key] = true
+        end
+    end
+    for _, other in pairs(sessions) do
+        if other.i == itemID and other.s == s and other.c ~= c and (other.demo and true or false) == demo then
+            if other.state == "awarded" then
+                Add(other.winner)
+            elseif other.state == "closed" then
+                local pick, n = nil, 0
+                for _, row in ipairs(BuildResults(other)) do
+                    if row.suggested then
+                        pick = row.key
+                        n = n + 1
+                    end
+                end
+                if n == 1 then Add(pick) end   -- (a tie: nobody is sure to have it yet)
+            end
+        end
+    end
+    -- the loot log's awards of the item for this drop (Loot history)
+    local Ledger, Loot = ns.Ledger, ns.Loot
+    if not demo and Ledger and Ledger.AwardsForDrop and Loot and Loot.GetHistory then
+        local hist = Loot:GetHistory()
+        for k = #hist, 1, -1 do
+            local d = hist[k]
+            if type(d) == "table" and d.s == s then
+                for _, e in ipairs(Ledger:AwardsForDrop(d)[itemID] or {}) do Add(e.w) end
+                break
+            end
+        end
+    end
+    return set
+end
+
+CopyClaims = function(ses)
+    return ClaimsOf(ses.i, ses.s, ses.c, ses.demo and true or false)
+end
+
+-- (public) The players who have (or are about to get) the other copies of itemID from the drop with source s, for
+-- copy c: { [key] = true } or nil. The drop panel's reserves preview of a copy that has no roll yet.
+function Roll:CopyClaims(itemID, s, c)
+    itemID = tonumber(itemID)
+    if not itemID then return nil end
+    return ClaimsOf(itemID, s, tonumber(c) or 1, DemoOn() and true or false)
 end
 
 -- Orders result rows and marks the suggestion (suggested / suggestedBy / tie / split), in place; returns them.

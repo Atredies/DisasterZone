@@ -2833,7 +2833,10 @@ function DropPanel:FillBlock(b, itemID, award, drop, vp, canRoll, copy)
     if rolling then
         rvKind, rvKeys = session.rv, session.rk
     elseif ns.Reserves and ns.Reserves.Decide then
-        rvKind, rvKeys = ns.Reserves:Decide(itemID)
+        -- (a second copy: whoever got another copy of it from this drop is no reserver of this one)
+        local taken = ns.Roll and ns.Roll.CopyClaims and type(drop) == "table"
+            and ns.Roll:CopyClaims(itemID, drop.s, copy) or nil
+        rvKind, rvKeys = ns.Reserves:Decide(itemID, taken)
     end
     if not rolling and (rvKind == "s" or rvKind == "o") then plain = true end
     b.rvKind = rvKind
