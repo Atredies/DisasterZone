@@ -78,7 +78,8 @@ function renderSettings() {
 
 // About: the version, and how the newest look for a new launcher went (the window's or the tray's).
 function renderAbout() {
-  $("about").textContent = "DisasterZone Launcher " + status.launcherVersion + " · releases from " + status.source;
+  $("about").textContent = "DisasterZone Launcher " + status.launcherVersion + " · "
+    + (status.feedOff ? "addon updates off (Discord sync only)" : "releases from " + status.source);
   const c = status.launcherCheck;
   const line = $("about-check");
   line.className = "rd" + (c && c.error ? " bad" : "");

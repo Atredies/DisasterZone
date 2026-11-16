@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DisasterZone Launcher",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "identifier": "com.disasterzone.launcher",
   "build": {
     "frontendDist": "../ui"
@@ -31,9 +31,9 @@
     "active": true,
     "targets": "all",
     "publisher": "DisasterZone",
-    "copyright": "Copyright (c) 2026 tsumilo. MIT License.",
+    "copyright": "Copyright (c) 2026 tsumilo (Tsumil); maintained by Arakis. MIT License.",
     "license": "MIT",
-    "homepage": "https://github.com/tsumilo/DisasterZone-releases",
+    "homepage": "https://github.com/Atredies/DisasterZone",
     "shortDescription": "Installs and updates the DisasterZone addon",
     "icon": [
       "icons/32x32.png",
@@ -46,9 +46,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdBQzYyNUVGQkRFOUM5NDgKUldSSXllbTk3eVhHZWxwbUVCb1l2MVcvZTlEZlpZMG9zNWxlNlFRWXErVDBRM0dxenRram5TZmgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEEwQ0U3MENBMzZFQ0VFRTMKUldUajd1dzJ5bkRPb0ZrM05YQWxPVVVKRkVoaVlPY0pFSTFESmU1ajBQN2xGczQ5Rm15S0pLazkK",
       "endpoints": [
-        "https://github.com/tsumilo/DisasterZone-releases/releases/download/launcher-latest/latest.json"
+        "https://github.com/Atredies/DisasterZone/releases/download/launcher-latest/latest.json"
       ],
       "windows": {
         "installMode": "quiet"

@@ -7,6 +7,25 @@ updated: 2026-11-16
 
 Newest first. Addon and tooling changes in this repo; the addon's own player-facing notes stay in its changelog.
 
+## 2026-11-16 - Launcher 0.6.0 for TBC (from the 0.5.0 source)
+
+- `launcher/`: the 0.5.0 source members run (src-tauri, ui, proto, package files) replaces the older 0.4.0 copy; the
+  bot server (`launcher/server`) stays. Version 0.6.0, same identity (`com.disasterzone.launcher`, "DisasterZone
+  Launcher"), so it installs over the old launcher and keeps its settings and Discord link.
+- Addon feed off: the launcher refuses the original releases repository as its source (`state::is_upstream_source`,
+  `Settings::release_source`) for every game version, so it never installs, updates or auto-installs the old 1.5.5
+  addon from it. The hero says "Updates off" and opens the releases page; Discord sync works as before.
+- Bot server: `launcher/server.txt` is empty in the repository; the Windows build writes it from the `DZ_BOT_SERVER`
+  secret. Sync and presence say "no bot server is set" instead of calling a relative URL.
+- Self-update from this repository: new updater public key and the feed
+  `releases/download/launcher-latest/latest.json` in `tauri.conf.json`. Releases page link points here.
+- From the Forever port: the Discord link survives a restart on Linux (keyring Secret Service), and the game is found
+  under Wine/Proton by its command line (`wow::in_folder_wine`).
+- About credits the original author (Tsumil) and the maintainer (Arakis).
+- `.github/workflows/launcher-windows.yml`: Windows installer + `latest.json` as the artifact `dz-tbc-launcher-windows`
+  on pull requests, launcher tags and Run workflow; publishing (release `launcher-v<version>` with `--latest=false`,
+  the `launcher-latest` feed) only when run by hand with "publish" on the tag.
+
 ## 2026-11-16 - Discord bot key per guild; dev install into the TBC client
 
 - `Core/Bridge.lua`: `Bridge.KeyFor(guildKey)` reads `ns.BridgeKeys[guildKey]` (one bot key per guild, the form the

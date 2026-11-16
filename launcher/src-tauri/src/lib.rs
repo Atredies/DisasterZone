@@ -36,10 +36,12 @@ struct Status {
     /// the newest check for a new launcher (Settings > About), none before the first
     launcher_check: Option<background::LauncherCheck>,
     source: String,
+    /// the addon feed is off: the release source is still upstream's (state::is_upstream_source)
+    feed_off: bool,
 }
 
 /// Where a launcher that can't update itself sends people (the hero's "Download the launcher").
-const RELEASES_PAGE: &str = "https://github.com/tsumilo/DisasterZone-releases/releases/latest";
+const RELEASES_PAGE: &str = "https://github.com/Atredies/DisasterZone/releases";
 
 pub(crate) fn layout(s: &Settings) -> Result<Layout> {
     match s.flavor_dir() {
@@ -78,6 +80,7 @@ fn status(log: State<'_, background::LauncherLog>) -> Status {
         launcher_version: env!("CARGO_PKG_VERSION"),
         launcher_check: log.get(),
         source: s.source(),
+        feed_off: state::is_upstream_source(&s.source()),
         settings: s,
     }
 }
@@ -281,7 +284,7 @@ fn pack_views(lay: &Layout, m: &Manifest, s: &Settings, plan: &Plan) -> Vec<Pack
 async fn check() -> Result<Check> {
     let s = state::load();
     let lay = layout(&s)?;
-    let src = Source::parse(&s.source())?;
+    let src = Source::parse(&s.release_source()?)?;
     let key = ReleaseKey::builtin();
     let m = src.manifest(&key, &s.channel).await?;
     let plan = install::check_plan(&lay, &m, &install::wanted(&lay, &m, &s.packs))?;
@@ -318,7 +321,7 @@ pub(crate) async fn run_update(app: &AppHandle) -> Result<Outcome> {
     let _guard = busy.0.try_lock().map_err(|_| crate::core::Error::Msg("already working".into()))?;
     let mut s = state::load();
     let lay = layout(&s)?;
-    let src = Source::parse(&s.source())?;
+    let src = Source::parse(&s.release_source()?)?;
     let m = src.manifest(&ReleaseKey::builtin(), &s.channel).await?;
     let seen = s.seen_seq.get(&s.channel).copied().unwrap_or(0);
     if m.seq < seen {

@@ -223,7 +223,7 @@ function demoApi() {
         case "sync_unlink": demoSync = { ...demoSync, linked: false, user: "", last: null, waiting: 0 }; return { ...demoSync };
         case "play": throw "Demo: Play would start Battle.net here.";
         case "open_folder": throw "Demo: this would open " + (args.folder || args.kind || "the folder") + ".";
-        case "open_releases": throw "Demo: this would open https://github.com/tsumilo/DisasterZone-releases/releases/latest.";
+        case "open_releases": throw "Demo: this would open https://github.com/Atredies/DisasterZone/releases.";
         case "launcher_checked":
           launcherLog = { at: Math.floor(Date.now() / 1000), found: args.found, error: args.error && args.error.split("\n")[0].slice(0, 160) };
           return { ...launcherLog };
@@ -234,7 +234,7 @@ function demoApi() {
     async launcherCheck() {
       await wait(600);
       if (lmode === "fail" || lmode === "gate-fail") {
-        throw "error sending request for url (https://github.com/tsumilo/DisasterZone-releases/releases/download/launcher-latest/latest.json)";
+        throw "error sending request for url (https://github.com/Atredies/DisasterZone/releases/download/launcher-latest/latest.json)";
       }
       return launcherOut ? { version: NEW_LAUNCHER } : null;
     },

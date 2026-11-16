@@ -1,0 +1,155 @@
+# Builds the DisasterZone Launcher's Windows installer (NSIS) with its self-update files.
+#
+# - A pull request that touches the launcher, Actions > Launcher (Windows) > Run workflow, or a pushed tag
+#   launcher-v<version>: build only. The installer and latest.json come out as the artifact dz-tbc-launcher-windows.
+#   (Run workflow appears once this file is on the default branch, main.) Without the updater key (a fork's pull
+#   request) the build has no self-update files.
+# - Publishing needs a person: Run workflow on the tag launcher-v<version> with "publish" ticked. It creates the release
+#   launcher-v<version> (never marked Latest: the repository's Latest is the addon, which members' download link opens)
+#   and puts latest.json into the release launcher-latest, which the launchers' self-update reads.
+#
+# Secrets: DZ_BOT_SERVER (the bot's https address, written into launcher/server.txt for this build only, never
+# committed; required to publish), TAURI_SIGNING_PRIVATE_KEY + TAURI_SIGNING_PRIVATE_KEY_PASSWORD (the updater key).
+name: Launcher (Windows)
+
+on:
+  push:
+    tags: ["launcher-v*"]
+  pull_request:
+    paths:
+      - "launcher/**"
+      - ".github/workflows/launcher-windows.yml"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the release launcher-v<version> and the update feed (run on that tag)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "launcher/src-tauri -> target"
+
+      - name: Version
+        id: version
+        shell: pwsh
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $v = (Get-Content launcher/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          "version=$v" >> $env:GITHUB_OUTPUT
+          if ($env:REF_TYPE -eq "tag" -and $env:REF_NAME -ne "launcher-v$v") {
+            throw "tag $env:REF_NAME does not match tauri.conf.json version $v"
+          }
+
+      - name: Bot server for this build
+        shell: pwsh
+        env:
+          DZ_BOT_SERVER: ${{ secrets.DZ_BOT_SERVER }}
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          if ($env:DZ_BOT_SERVER) {
+            Set-Content -Path launcher/server.txt -Value $env:DZ_BOT_SERVER.Trim() -NoNewline
+          } elseif ($env:PUBLISH -eq "true") {
+            throw "set the repository secret DZ_BOT_SERVER (the bot's https address) before publishing"
+          } else {
+            Write-Output "::warning::DZ_BOT_SERVER is not set: this build has no bot server (Settings > Discord > Server sets one)"
+          }
+          $updater = if ($env:HAS_KEY -eq "true") { "true" } else { "false" }
+          if ($updater -eq "false") {
+            if ($env:PUBLISH -eq "true") { throw "the updater key secrets are missing" }
+            Write-Output "::warning::no updater key: this build has no self-update files"
+          }
+          Set-Content -Path ci-tauri.json -Value "{`"bundle`":{`"createUpdaterArtifacts`":$updater}}" -NoNewline
+
+      - name: npm ci
+        working-directory: launcher
+        run: npm ci
+
+      - name: Build the installer
+        working-directory: launcher
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --bundles nsis --config ${{ github.workspace }}/ci-tauri.json
+
+      - name: Installer, signature and latest.json
+        shell: pwsh
+        env:
+          REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $nsis = "launcher/src-tauri/target/release/bundle/nsis"
+          $exe = Get-ChildItem "$nsis/*-setup.exe" | Select-Object -First 1
+          if (-not $exe) { throw "no installer was built" }
+          # (a name without spaces: GitHub turns spaces in asset names into dots, and latest.json must name the asset)
+          $name = "DisasterZoneLauncher_${env:VERSION}_x64-setup.exe"
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item $exe.FullName "out/$name"
+          if (-not (Test-Path "$($exe.FullName).sig")) { Write-Output "no updater signature: no latest.json"; Get-ChildItem out; exit 0 }
+          Copy-Item "$($exe.FullName).sig" "out/$name.sig"
+          $sig = (Get-Content "out/$name.sig" -Raw).Trim()
+          $url = "https://github.com/$env:REPO/releases/download/launcher-v$env:VERSION/$name"
+          $entry = @{ signature = $sig; url = $url }
+          $feed = [ordered]@{
+            version  = $env:VERSION
+            notes    = "DisasterZone Launcher $env:VERSION"
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{ "windows-x86_64" = $entry; "windows-x86_64-nsis" = $entry }
+          }
+          $feed | ConvertTo-Json -Depth 5 | Set-Content -Path out/latest.json -Encoding utf8NoBOM
+          Get-ChildItem out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dz-tbc-launcher-windows
+          path: out/*
+          retention-days: 14
+
+  publish:
+    needs: windows
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dz-tbc-launcher-windows
+          path: out
+
+      - name: Release launcher-v<version> (not Latest) and the update feed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.windows.outputs.version }}
+        run: |
+          gh release create "$TAG" --repo "$REPO" --verify-tag --latest=false \
+            --title "DisasterZone Launcher $VERSION" \
+            --notes "Windows: download DisasterZoneLauncher_${VERSION}_x64-setup.exe and run it. It installs over an older DisasterZone Launcher and keeps its settings. The launcher keeps itself up to date after that." \
+            out/DisasterZoneLauncher_${VERSION}_x64-setup.exe out/DisasterZoneLauncher_${VERSION}_x64-setup.exe.sig
+          if ! gh release view launcher-latest --repo "$REPO" > /dev/null 2>&1; then
+            gh release create launcher-latest --repo "$REPO" --prerelease --latest=false --title "Launcher update feed" \
+              --notes "Read by the launcher's self-update. To install the launcher, take the newest 'DisasterZone Launcher' release."
+          fi
+          gh release upload launcher-latest out/latest.json --repo "$REPO" --clobber

@@ -1,6 +1,6 @@
 //! The launcher's own settings (one JSON file in the OS config folder).
 
-use super::error::Result;
+use super::error::{msg, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -8,6 +8,18 @@ use std::path::PathBuf;
 
 /// Where releases are published (the public releases repository). A setting can point elsewhere for testing.
 pub const DEFAULT_SOURCE: &str = include_str!("../../../source.txt");
+
+/// What an install, update or release check says while the release source is still upstream's.
+pub const NO_RELEASE_SOURCE: &str =
+    "Addon updates are off in this launcher for now: there is no DisasterZone release feed of ours yet. Update the addon from the releases page; Discord sync works as before.";
+
+/// A URL that still points at upstream's releases repository (tsumilo/DisasterZone-releases): its manifests carry the
+/// original 1.5.5 release, signed with a key we don't hold, so installing from it would put that old addon back over a
+/// newer one. The launcher never installs, updates or auto-installs from it; the guard falls away once source.txt
+/// names a feed of ours.
+pub fn is_upstream_source(url: &str) -> bool {
+    url.to_ascii_lowercase().contains("tsumilo/disasterzone-releases")
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -102,6 +114,16 @@ impl Settings {
         self.source.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| DEFAULT_SOURCE.trim().to_string())
     }
 
+    /// The source an install, update or release check reads: refused while it is upstream's (is_upstream_source), for
+    /// every game version. A folder or another URL (a test feed, our own later) is used as before.
+    pub fn release_source(&self) -> Result<String> {
+        let src = self.source();
+        if is_upstream_source(&src) {
+            return msg(NO_RELEASE_SOURCE);
+        }
+        Ok(src)
+    }
+
     pub fn flavor_dir(&self) -> Option<PathBuf> {
         self.wow_root.as_ref().map(|r| PathBuf::from(r).join(&self.flavor))
     }
@@ -147,6 +169,25 @@ pub fn save(s: &Settings) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upstreams_release_source_is_refused() {
+        let upstream = "https://raw.githubusercontent.com/tsumilo/DisasterZone-releases/main/";
+        assert!(is_upstream_source(upstream));
+        assert!(is_upstream_source("https://raw.githubusercontent.com/TSUMILO/DisasterZone-Releases/main"));
+        assert!(!is_upstream_source("https://raw.githubusercontent.com/Atredies/DisasterZone/main/"));
+        for flavor in ["_anniversary_", "_classic_era_", "_retail_"] {
+            let s = Settings { flavor: flavor.into(), source: Some(upstream.into()), ..Default::default() };
+            assert_eq!(s.release_source().unwrap_err().to_string(), NO_RELEASE_SOURCE);
+        }
+        let ours = "https://example.org/dz-releases/";
+        let s = |src: &str| Settings { source: Some(src.into()), ..Default::default() };
+        assert_eq!(s(ours).release_source().unwrap(), ours);
+        assert_eq!(s("/home/me/dz-build").release_source().unwrap(), "/home/me/dz-build");
+        // (the built-in source as shipped: refused while source.txt is upstream's)
+        let built_in = Settings { source: None, ..Default::default() };
+        assert_eq!(built_in.release_source().is_err(), is_upstream_source(DEFAULT_SOURCE));
+    }
 
     #[test]
     fn each_game_version_keeps_its_own_game_choices() {

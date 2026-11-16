@@ -17,8 +17,11 @@ use tauri::{AppHandle, Emitter};
 
 const KEY_SERVICE: &str = "DisasterZoneLauncher";
 const KEY_USER: &str = "discord-sync-key";
-/// The guild's bot server (a setting can point elsewhere, e.g. http://127.0.0.1:8787 while testing at home).
+/// The guild's bot server (a setting can point elsewhere, e.g. http://127.0.0.1:8787 while testing at home). Empty in
+/// the repository: the build writes the bot's address from the DZ_BOT_SERVER secret (.github/workflows), so a build
+/// without it has no server until one is set in Settings > Discord.
 pub const DEFAULT_SERVER: &str = include_str!("../../server.txt");
+const NO_SERVER: &str = "no bot server is set (Settings > Discord > Server)";
 /// While the game runs, ask for new records this often even when it hasn't saved (none while it is closed: the next
 /// start asks at once). The bot's free server has little traffic to spare.
 const POLL: Duration = Duration::from_secs(120);
@@ -107,7 +110,7 @@ async fn refusal(r: reqwest::Response) -> String {
 pub async fn link(app: &AppHandle, code: &str) -> Result<SyncView> {
     let base = server();
     if base.is_empty() {
-        return msg("no bot server is set (Settings > Discord > Server)");
+        return msg(NO_SERVER);
     }
     let r = client()?
         .post(format!("{base}/api/link"))
@@ -169,8 +172,12 @@ pub async fn sync_now(app: &AppHandle) -> Result<SyncView> {
     };
     let body = gzip(&serde_json::to_vec(&up).unwrap_or_default());
     let result: Result<SyncDown> = async {
+        let base = server();
+        if base.is_empty() {
+            return msg(NO_SERVER);
+        }
         let r = client()?
-            .post(format!("{}/api/sync", server()))
+            .post(format!("{base}/api/sync"))
             .bearer_auth(&k)
             .header("content-type", "application/json")
             .header("content-encoding", "gzip")
@@ -242,8 +249,12 @@ pub struct PresenceView {
 pub async fn presence() -> PresenceView {
     let Some(k) = key() else { return PresenceView::default() };
     let got: Result<PresenceDown> = async {
+        let base = server();
+        if base.is_empty() {
+            return msg(NO_SERVER);
+        }
         let r = client()?
-            .get(format!("{}/api/presence", server()))
+            .get(format!("{base}/api/presence"))
             .bearer_auth(&k)
             .send()
             .await

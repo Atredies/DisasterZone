@@ -140,6 +140,15 @@ function renderHero() {
     setLine("This is a development copy of the addon: the launcher leaves it alone.");
     return;
   }
+  // (the addon feed is off while the release source is upstream's: nothing to check, the releases page has the addon)
+  if (status.feedOff) {
+    const releases = () => api.invoke("open_releases").catch(toast);
+    setChip("Updates off", "");
+    setRel(have ? inst.version : null, have ? null : "Get the addon from the releases page.");
+    setLine("Addon updates are off in this launcher for now. Discord sync works as before.");
+    if (have) { playMain(); setSecond("Releases page", releases); } else setMain("RELEASES PAGE", releases);
+    return;
+  }
   if (checking && !check) {
     setChip("Checking", "gold busy");
     setRel(have ? inst.version : null, have ? releaseTitle(inst.version) : "Looking for the newest release…");

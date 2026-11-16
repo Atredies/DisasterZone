@@ -226,7 +226,15 @@ async fn try_tick(app: &AppHandle, manual: bool) -> Result<()> {
         set_tooltip(app, "DisasterZone · development copy");
         return Ok(());
     }
-    let src = Source::parse(&s.source())?;
+    // (the addon feed is off while the release source is upstream's: no check, no notification, no auto-install)
+    if state::is_upstream_source(&s.source()) {
+        set_tooltip(app, "DisasterZone · addon updates off (Discord sync only)");
+        if manual {
+            notify(app, "DisasterZone addon updates are off", state::NO_RELEASE_SOURCE);
+        }
+        return Ok(());
+    }
+    let src = Source::parse(&s.release_source()?)?;
     let m = src.manifest(&ReleaseKey::builtin(), &s.channel).await?;
     if m.seq < s.seen_seq.get(&s.channel).copied().unwrap_or(0) {
         return Ok(()); // a stale copy of the release list: the next check gets the current one
@@ -406,6 +414,17 @@ mod tests {
         assert_eq!(v["found"], "0.4.2");
         assert!(v["error"].is_null());
         assert!(v["at"].as_u64().unwrap() > 1_700_000_000);
+    }
+
+    #[test]
+    fn the_launcher_updates_from_our_own_feed() {
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let ends = conf.pointer("/plugins/updater/endpoints").and_then(|e| e.as_array()).unwrap();
+        assert!(!ends.is_empty());
+        for u in ends.iter().filter_map(|u| u.as_str()) {
+            assert!(!state::is_upstream_source(u), "{u}");
+            assert!(u.starts_with("https://github.com/Atredies/DisasterZone/releases/"), "{u}");
+        }
     }
 
     #[test]
