@@ -429,5 +429,48 @@ def plan_an_officer_cannot_rewrite_the_developers_plan():
     no_errors(w)
 
 
+# ------------------------------------------------------------------------------------------------------------------
+# 5b. Low priority: who recorded a loot council award (Ledger `by`)
+# ------------------------------------------------------------------------------------------------------------------
+LEDGER_SEND = """local id, by, to, ts = ...
+ns.Comm:Send({ t = 'A', e = { id = id, i = 28766, w = to, by = by, ts = ts, s = 'm' } }, 'WHISPER', to, 'data')"""
+
+
+def _ledger(cl, id_):
+    return cl.eval_py("local e = ns.db.ledger and ns.db.ledger[...]; return e and { by = e.by, rb = e.rb or false }",
+                      id_)
+
+
+@case
+def ledger_an_award_passed_on_says_who_passed_it_on():
+    sys.path.insert(0, os.path.join(TESTS, "sync"))
+    import common  # noqa: E402
+    from common import Client as SClient, new_world, up, settle, gm_pick  # noqa: E402
+    w = new_world(council=None)
+    gm = SClient(w, "Guildboss", class_file="PALADIN", guild_rank=0)
+    ca = SClient(w, "Councila", class_file="PRIEST", guild_rank=1)
+    cb = SClient(w, "Councilb", class_file="MAGE", guild_rank=2)
+    for x in (gm, ca, cb):
+        up(x)
+    settle(w, 3)
+    gm_pick(w, gm, ["Councila", "Councilb"])
+    settle(w, 60)
+    key = common.key
+    ts = gm.eval("return GetServerTime()") - 60
+    # Councilb tells Councila of an award "recorded by" the GM
+    cb.eval(LEDGER_SEND, "forged-1", key("Guildboss"), key("Councila"), ts)
+    settle(w, 3)
+    assert _ledger(ca, "forged-1") == {"by": key("Guildboss"), "rb": key("Councilb")}, _ledger(ca, "forged-1")
+    # an award its sender recorded: no mark
+    cb.eval(LEDGER_SEND, "own-1", key("Councilb"), key("Councila"), ts)
+    settle(w, 3)
+    assert _ledger(ca, "own-1") == {"by": key("Councilb"), "rb": False}, _ledger(ca, "own-1")
+    # the recorder's own copy puts things right
+    gm.eval(LEDGER_SEND, "forged-1", key("Guildboss"), key("Councila"), ts)
+    settle(w, 3)
+    assert _ledger(ca, "forged-1") == {"by": key("Guildboss"), "rb": False}, _ledger(ca, "forged-1")
+    no_errors(w)
+
+
 if __name__ == "__main__":
     run_all()

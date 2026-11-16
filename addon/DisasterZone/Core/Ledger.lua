@@ -802,7 +802,17 @@ function Ledger:Merge(entry, fromKey)
     -- entries from a peer belong to the guild we share with it (untagged until my guild name is known)
     e.g = gkey or nil
     local cur = db[e.id]
+    -- 2026-11-09 (authority holes 4): who recorded it (by) is the sender's word when the sender isn't the recorder:
+    -- such a copy keeps who passed it on (rb, local only: Clean drops it on the wire, the digest doesn't read it),
+    -- and the recorder's own copy puts its by in place and clears the mark.
+    local fromRecorder = fromKey == nil or Util.IsMe(fromKey) or fromKey == e.by
+        or (ns.Guild and ns.Guild.SameAccount and ns.Guild:SameAccount(fromKey, e.by)) or false
+    if type(cur) == "table" and cur.rb and fromRecorder and fromKey ~= nil then
+        cur.by, cur.rb = e.by, nil
+        Invalidate()
+    end
     if type(cur) ~= "table" then
+        if not fromRecorder then e.rb = fromKey end
         db[e.id] = e
         if gkey == false then pendingScope[e.id] = "quiet" end
         Invalidate()
