@@ -11,9 +11,9 @@ updated: 2026-11-16
 
 From the Forever repo's changelog (0.2.6 to 0.2.8), the ones that apply to TBC:
 
-- Raid times: one Local / Server clock switch (`settings.serverClock`)
-- A busy calendar day turns in pages instead of "+N more"
-- Bingo: view another raider's card from the race
+- [x] Raid times: one Local / Server clock switch (`settings.serverClock`)
+- [x] A busy calendar day turns in pages instead of "+N more"
+- [x] Bingo: view another raider's card from the race
 - Guild key from the guild's realm (connected realms share the guild's data)
 - A Discord answer to a locked raid becomes a request to join
 - Chess ladder catch-up only from the one asked
