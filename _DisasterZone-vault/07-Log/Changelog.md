@@ -7,6 +7,14 @@ updated: 2026-11-16
 
 Newest first. Addon and tooling changes in this repo; the addon's own player-facing notes stay in its changelog.
 
+## 2026-11-16 - Discord bot key per guild; dev install into the TBC client
+
+- `Core/Bridge.lua`: `Bridge.KeyFor(guildKey)` reads `ns.BridgeKeys[guildKey]` (one bot key per guild, the form the
+  bot's keygen writes); the older single `ns.BridgeKey` still works. From the Forever port, with its bridge cases.
+- `dev/install_tbc.sh`: copies this checkout into the TBC Anniversary client (`_anniversary_/Interface/AddOns`) as a
+  "dev" build (in-game updates skip it): the maintainer's own client runs dev, members run releases. `--all` adds every
+  game pack, `--remove` takes the folders out. Saved data is never touched.
+
 ## 2026-11-16 - Fixes and features from the Forever port (security, sync, loot, recruitment)
 
 Brought over from the Forever port after checking each against 1.5.5 (the bug present in 1.5.5, or the feature
