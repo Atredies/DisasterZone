@@ -634,8 +634,8 @@ local function Catcher()
         if InCombatLockdown and InCombatLockdown() then return end
         local k = Pressed(key)
         if assignFor then
-            if not k then self:SetPropagateKeyboardInput(false) return end
-            self:SetPropagateKeyboardInput(false)
+            if not k then ns.Util.SetPropagateKeys(self, false) return end
+            ns.Util.SetPropagateKeys(self, false)
             local spell, done = assignFor, assignDone
             assignFor, assignDone = nil, nil
             if key ~= "ESCAPE" then SP:SetKey(spell, k) end
@@ -643,9 +643,9 @@ local function Catcher()
             if done then done(key ~= "ESCAPE" and k or nil) end
             return
         end
-        if not run then self:SetPropagateKeyboardInput(true) return end
+        if not run then ns.Util.SetPropagateKeys(self, true) return end
         if key == "ESCAPE" then
-            self:SetPropagateKeyboardInput(false)
+            ns.Util.SetPropagateKeys(self, false)
             SP:Stop("esc")
             return
         end
@@ -653,10 +653,10 @@ local function Catcher()
         local spell
         for s, kk in pairs(run.keyOf) do if kk == nk then spell = s end end
         if spell then
-            self:SetPropagateKeyboardInput(false)
+            ns.Util.SetPropagateKeys(self, false)
             SP:Press(spell)
         else
-            self:SetPropagateKeyboardInput(true)
+            ns.Util.SetPropagateKeys(self, true)
         end
     end)
     return catcher

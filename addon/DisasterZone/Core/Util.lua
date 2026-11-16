@@ -30,6 +30,36 @@ function Util.GetPlayerRealm()
     return realm
 end
 
+-- Frame:SetPropagateKeyboardInput is protected in combat on the modern clients: an addon calling it then gets
+-- ADDON_ACTION_BLOCKED (seen on the retail engine with the Atlas page first opened in a fight; upstream already
+-- guarded some calls with InCombatLockdown). Every call goes through here: in combat it is not made (returns false);
+-- the last value asked for is applied when combat ends, so a panel built during a fight still lets keys through to
+-- the game afterwards.
+local propagateLater = setmetatable({}, { __mode = "k" })   -- frame -> the value to apply after combat
+local propagateWatch
+local function ApplyPropagateLater()
+    for frame, on in pairs(propagateLater) do
+        propagateLater[frame] = nil
+        frame:SetPropagateKeyboardInput(on)
+    end
+end
+function Util.SetPropagateKeys(frame, on)
+    if not (frame and frame.SetPropagateKeyboardInput) then return false end
+    on = on and true or false
+    if InCombatLockdown and InCombatLockdown() then
+        propagateLater[frame] = on
+        if not propagateWatch and CreateFrame then
+            propagateWatch = CreateFrame("Frame")
+            propagateWatch:RegisterEvent("PLAYER_REGEN_ENABLED")
+            propagateWatch:SetScript("OnEvent", ApplyPropagateLater)
+        end
+        return false
+    end
+    propagateLater[frame] = nil
+    frame:SetPropagateKeyboardInput(on)
+    return true
+end
+
 -- The addon's developer (owner decision 2026-11-16, from 1.6.0; the original author's character before): a name key,
 -- the character's name and the realm without spaces. The only power tied to a name: the feedback "developer" badge
 -- and staff replies (Core/Feedback.lua), the Performance page on from the first file (Core/Perf.lua), the

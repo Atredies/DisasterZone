@@ -542,7 +542,7 @@ local function Build(parent)
         end
         if not InCombatLockdown() then
             self:EnableKeyboard(true)
-            self:SetPropagateKeyboardInput(true)
+            ns.Util.SetPropagateKeys(self, true)
         end
     end)
     p:SetScript("OnHide", function(self)
@@ -552,7 +552,7 @@ local function Build(parent)
     end)
     p:SetScript("OnKeyDown", function(self, key)
         if key ~= "ESCAPE" then return end
-        if not InCombatLockdown() then self:SetPropagateKeyboardInput(false) end
+        if not InCombatLockdown() then ns.Util.SetPropagateKeys(self, false) end
         NavMenu:Close()
     end)
     p:SetScript("OnEvent", function(self, event)

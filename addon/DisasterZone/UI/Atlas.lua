@@ -3115,13 +3115,13 @@ function AtlasUI:CreatePanel(parent)
 
     -- Ctrl+F: the search (every other key goes on to the game)
     panel:EnableKeyboard(true)
-    if panel.SetPropagateKeyboardInput then panel:SetPropagateKeyboardInput(true) end
+    if panel.SetPropagateKeyboardInput then ns.Util.SetPropagateKeys(panel, true) end
     panel:SetScript("OnKeyDown", function(self, key)
         if key == "F" and IsControlKeyDown() and not InCombatLockdown() then
-            self:SetPropagateKeyboardInput(false)
+            ns.Util.SetPropagateKeys(self, false)
             searchBox:SetFocus()
             C_Timer.After(0, function()
-                if not InCombatLockdown() then self:SetPropagateKeyboardInput(true) end
+                if not InCombatLockdown() then ns.Util.SetPropagateKeys(self, true) end
             end)
         end
     end)
