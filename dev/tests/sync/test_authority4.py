@@ -204,5 +204,73 @@ def live_a_member_cannot_name_a_victim_as_host_nor_take_over_a_run_unseen():
     no_errors(w)
 
 
+# ------------------------------------------------------------------------------------------------------------------
+# 3. Group runs
+# ------------------------------------------------------------------------------------------------------------------
+def dr_world():
+    w = World()
+    c = {}
+    for i, (name, cls) in enumerate((("Gina", "PALADIN"), ("Alfa", "PRIEST"), ("Bert", "WARRIOR"), ("Cara", "MAGE"))):
+        c[name] = Client(w, name, class_file=cls, guild_rank=0 if i == 0 else 3)
+    for x in c.values():
+        x.load_addon()
+    w.tick(50)
+    return w, c
+
+
+def dr_runs(cl):
+    return cl.eval_py("local out = {}; for _, r in ipairs(ns.DungeonRuns:GetRuns()) do out[r.id] = { o = r.o, "
+                      "no = r.no or false, rb = r.rb or false, rv = r.rv } end; return out") or {}
+
+
+def dr_list(cl, d="Botanica", at=0, note=None):
+    rid = cl.eval_py("local r, why = ns.DungeonRuns:List({ d = select(1, ...), h = true, role = 'healer', "
+                     "at = select(2, ...), no = select(3, ...) }); return r and r.id or why", d, at, note)
+    assert isinstance(rid, str) and ":" in rid, rid
+    return rid
+
+
+# a DRS whispered by the sender with one run: id, owner o, note, rv; the sender's own profile first
+DR_FORGE = """local id, o, note, rv, to = ...
+local now = GetServerTime()
+ns.Comm:Send({ t = 'DRS', p = {}, l = { { id = id, o = o, d = 3, h = 1, at = 0, c = now, rv = rv, no = note,
+  s = { { o, 2 } } } } }, 'WHISPER', to, 'run')"""
+
+
+@case
+def runs_a_run_passed_on_is_believed_only_from_its_owner():
+    w, c = dr_world()
+    gina, alfa, bert, cara = c["Gina"], c["Alfa"], c["Bert"], c["Cara"]
+    rid = dr_list(gina, note="Quick heroic")
+    w.tick(3)
+    real = dr_runs(cara)[rid]
+    assert real["o"] == fk("Gina") and real["no"] == "Quick heroic", real
+    # Bert overwrites Gina's run on Cara's client (a newer revision, his note), and lists a made-up one of hers
+    bert.eval(DR_FORGE, rid, fk("Gina"), "Selling boosts, whisper Bert", real["rv"] + 100, fk("Cara"))
+    bert.eval(DR_FORGE, fk("Gina") + ":1", fk("Gina"), "Gina pays 100g", 5, fk("Cara"))
+    w.tick(5)
+    got = dr_runs(cara)
+    assert got[rid]["no"] == "Quick heroic" and got[rid]["rb"] is False, got
+    assert fk("Gina") + ":1" not in got, got
+    # nor does a DRL of his own take her run's id
+    bert.eval("local id, to, rv = ...; ns.Comm:Send({ t = 'DRL', id = id, d = 3, h = 1, at = 0, c = GetServerTime(), "
+              "rv = rv, no = 'mine now', s = { { ns.Util.PlayerKey(), 1 } } }, 'GUILD', nil, 'run')",
+              rid, fk("Cara"), real["rv"] + 200)
+    w.tick(3)
+    got = dr_runs(cara)[rid]
+    assert got["o"] == fk("Gina") and got["no"] == "Quick heroic", got
+    # a run of an owner who is offline: kept, marked with who passed it on, and gone once she says it isn't hers
+    alfa.logout()
+    w.tick(3)
+    bert.eval(DR_FORGE, fk("Alfa") + ":2", fk("Alfa"), "Alfa says: guild bank is open", 5, fk("Cara"))
+    w.tick(3)
+    got = dr_runs(cara)
+    assert got[fk("Alfa") + ":2"]["rb"] == fk("Bert"), got
+    alfa.login()
+    w.tick(60)
+    assert fk("Alfa") + ":2" not in dr_runs(cara), dr_runs(cara)
+    no_errors(w)
+
+
 if __name__ == "__main__":
     run_all()
