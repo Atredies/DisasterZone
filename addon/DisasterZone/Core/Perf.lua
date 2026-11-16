@@ -1,6 +1,6 @@
 if DisasterZoneBoot and DisasterZoneBoot.Run("Core/Perf.lua", ...) then return end -- DisasterZone Core/Perf.lua
 -- Performance: what DisasterZone costs this client, for the Performance page (UI/PerfUI.lua). It runs for the
--- developer's character (DEV, Tsumil) and for a character whose player turned it on (Settings > About, "Performance
+-- developer's character (DEV, Util.DEV_KEY) and for a character whose player turned it on (Settings > About, "Performance
 -- page": saved per character in settings.perfPage, read here while the files load, so it applies after a /reload -
 -- the hooks below must be in place before the other files run). For everybody else this file sets a few names and
 -- stops: no hooks, no sampling.
@@ -30,7 +30,7 @@ local addonName, ns = ...
 local Perf = {}
 ns.Perf = Perf
 
-local DEV = "Tsumil"             -- (Core/Feedback.lua DEV_NAME, Core/Guild.lua DEBUG_CHAR: the same character)
+local DEV = ns.Util.DEV_KEY       -- the developer: name and realm (Core/Util.lua says why the realm is part of it)
 local SAMPLE_S = 10
 local KEEP = 360                 -- samples: an hour
 local RATE_WINDOW = 300          -- s: garbage per minute over the last five minutes
@@ -56,7 +56,7 @@ local function SavedWanted()
     return type(s) == "table" and s[CharKey()] == true
 end
 
-local isDev = (UnitName and UnitName("player")) == DEV
+local isDev = UnitName ~= nil and CharKey() == DEV
 local isOn = isDev or SavedWanted()
 Perf.DEV = DEV
 function Perf:IsDev() return isDev end

@@ -1,7 +1,7 @@
 ## Interface: 20506
 ## Title: |cffff8000Disaster|rZone · Azeromon
 ## Notes: Tame and battle the beasts of Elwynn.
-## Author: Casual Disaster
+## Author: Tsumil (original), Arakis
 ## Dependencies: DisasterZone
 ## X-DZ-Pack: azeromon
 ## X-DZ-Kind: game

@@ -1,5 +1,5 @@
 if DisasterZoneBoot and DisasterZoneBoot.Run("UI/FeedbackSheet.lua", ...) then return end -- DisasterZone: UI/FeedbackSheet.lua
--- Telling Tsumil (Core/Feedback.lua), from anywhere:
+-- Telling the developer (Core/Feedback.lua), from anywhere:
 --   The sheet: four tiles (Something broke / I have an idea / Change something / I love this), a box for a few words,
 --   "About" (what it is about: Point at it, or Ctrl+right-click anything in DisasterZone), what goes with it (version,
 --   zone, spec, the last Lua error for a bug), the guild's open items that sound the same (Me too instead of a
@@ -7,7 +7,7 @@ if DisasterZoneBoot and DisasterZoneBoot.Run("UI/FeedbackSheet.lua", ...) then r
 --   Point at it: the screen dims, the DisasterZone frame under the mouse lights up, a click picks it.
 --   Ctrl+right-click on any DisasterZone frame opens the sheet about that frame.
 --   News, through the notification center (its bell, pop-ups and Settings > Notifications): DisasterZone hit a Lua
---   error (Tell Tsumil, the error attached); your feedback is in a release you have; somebody answered your feedback.
+--   error (Tell <developer>, the error attached); your feedback is in a release you have; somebody answered your feedback.
 --   Without the notification center they are this file's own pop-ups (one at a time, never in combat).
 -- 1.4: the form is a tool window (UI:CreateLayout "tool": its banner over the body), its pop-ups are UI:Toast; the
 -- kinds and the words on the shared surfaces (sleek tiles, icon tiles, inset cards), the chips are pills;

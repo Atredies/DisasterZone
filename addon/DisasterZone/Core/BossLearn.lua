@@ -14,7 +14,7 @@ if DisasterZoneBoot and DisasterZoneBoot.Run("Core/BossLearn.lua", ...) then ret
 --              on), skipped when a guildmate already sent the same pull with as much in it. What arrives is checked
 --              (format, version, the boss's data signature, every time within the pull, caps) and dropped whole when
 --              anything is odd; it waits while I'm in a fight.
---   review     the developer only (Tsumil: Perf:IsDev / Feedback:AmIDev): an alert that never fires while the boss
+--   review     the developer only (Util.DEV_KEY: Perf:IsDev / Feedback:AmIDev): an alert that never fires while the boss
 --              casts a spell of the same name under another id ("Use 36240" / "Ignore"), frequent unknown casts and
 --              unknown yells. Decisions are saved for the dev kit (tools/bossmods_learned.py) to bake into the data;
 --              Use only changes the developer's own client.

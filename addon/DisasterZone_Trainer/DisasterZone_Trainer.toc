@@ -1,7 +1,7 @@
 ## Interface: 20506
 ## Title: |cffff8000Disaster|rZone · Raid Trainer
 ## Notes: Practise each boss in 3D before the pull.
-## Author: Casual Disaster
+## Author: Tsumil (original), Arakis
 ## Dependencies: DisasterZone
 ## X-DZ-Pack: trainer
 ## X-DZ-Kind: game

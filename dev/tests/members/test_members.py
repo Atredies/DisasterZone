@@ -488,17 +488,17 @@ def the_header_buttons_are_clickable_over_the_hover_area():
 
 @case
 def a_debug_role_sees_the_notes_ui_without_touching_the_real_notes():
-    """The developer's character (Tsumil) pretending to be GM / officer: the notes UI works with test notes that stay
+    """The developer's character (Arakis) pretending to be GM / officer: the notes UI works with test notes that stay
     on that PC; nothing is sent, no real note arrives, and the real officers' notes are untouched."""
     w = World()
     c = {}
-    for name, rank, cls in (("Gina", 0, "PALADIN"), ("Otto", 1, "WARRIOR"), ("Tsumil", 3, "ROGUE"), ("Sam", 3, "MAGE")):
+    for name, rank, cls in (("Gina", 0, "PALADIN"), ("Otto", 1, "WARRIOR"), ("Arakis", 3, "ROGUE"), ("Sam", 3, "MAGE")):
         c[name] = Client(w, name, guild_rank=rank, class_file=cls)
     for x in c.values():
         x.load_addon()
         set_skills(x, [])
     w.tick(5)
-    gina, otto, tsu = c["Gina"], c["Otto"], c["Tsumil"]
+    gina, otto, tsu = c["Gina"], c["Otto"], c["Arakis"]
     assert set_note(gina, "Sam", "The real note.")["ok"] is True
     w.tick(5)
     assert tsu.eval("return %s:CanUse()" % N) is False
@@ -521,7 +521,7 @@ def a_debug_role_sees_the_notes_ui_without_touching_the_real_notes():
     w.tick(120)
     assert note(tsu, "Sam") == "A test note."
     assert not [e for e in w.addon_log[start:] if e["chat_type"] == "WHISPER" and e["prefix"] == "CDLd"
-                and str(e["target"]).split("-")[0] == "Tsumil"]
+                and str(e["target"]).split("-")[0] == "Arakis"]
     tsu.slash("/dz members")
     w.tick(1)
     tsu.eval("%s:SelectMember(...)" % UI, K("Sam"))

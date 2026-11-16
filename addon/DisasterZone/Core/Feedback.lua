@@ -1,10 +1,10 @@
 if DisasterZoneBoot and DisasterZoneBoot.Run("Core/Feedback.lua", ...) then return end -- DisasterZone: feedback to the developer.
--- Members tell the addon's developer (DEV_NAME, Tsumil) about bugs, ideas, changes they want and things they love. A
+-- Members tell the addon's developer (DEV_KEY, Util.DEV_KEY: Arakis) about bugs, ideas, changes they want and things they love. A
 -- WoW addon can't reach the internet, so feedback travels inside the guild: every client keeps the guild's feedback
 -- and passes it on, so an item reaches the developer the next time the developer and anyone who holds it are online
 -- together. Everyone in the guild sees every item and may add a "me too"; the developer, the Guild Master and the
 -- officers ("staff") answer, set a status and merge duplicates. The developer's client numbers each item (#42) when it
--- first sees it: that is "Tsumil has it" for the author, and the number a changelog line names (Data/Changelog.lua:
+-- first sees it: that is "<developer> has it" for the author, and the number a changelog line names (Data/Changelog.lua:
 -- a line { "text", fb = { 42 }, by = { "Name" }, k = "bug" }); a release whose notes name an item is its "Fixed in".
 --
 -- Data (SavedVariables db.feedback[guildKey], account wide):
@@ -47,8 +47,10 @@ local strlower, strsub, strfind, strmatch, strgsub = string.lower, string.sub, s
 -- Constants
 ---------------------------------------------------------------------------
 
-local DEV_NAME = "Tsumil"
-Feedback.DEV_NAME = DEV_NAME
+-- (name and realm: a character of the same name on another realm is not the developer; Core/Util.lua)
+local DEV_KEY = Util.DEV_KEY
+local DEV_NAME = DEV_KEY:match("^([^%-]+)")
+Feedback.DEV_KEY, Feedback.DEV_NAME = DEV_KEY, DEV_NAME
 
 local KINDS = { "bug", "idea", "change", "love" }
 local KIND_OK = { bug = true, idea = true, change = true, love = true }
@@ -128,22 +130,13 @@ local function Jitter(span, salt) return Util.Jitter(salt, span) end
 -- Who is who
 ---------------------------------------------------------------------------
 
--- The developer's character in the guild roster (DEV_NAME on my realm), or nil.
-local function DevKey()
-    local key = Util.NormalizeName(DEV_NAME)
-    local Guild = G()
-    if Guild and Guild.IsInGuild and key and Guild:IsInGuild(key, true) then return key end
-    return key
-end
-
--- Is key the developer (DEV_NAME, or a character the developer's account vouches for)?
+-- Is key the developer (DEV_KEY: that name on that realm, never the name alone; or a character the developer's own
+-- account vouches for)?
 function Feedback:IsDev(key)
     if type(key) ~= "string" then return false end
-    local name = strmatch(key, "^([^%-]+)")
-    if name == DEV_NAME then return true end
-    local dev = DevKey()
+    if Util.IsDevKey(key) then return true end
     local Guild = G()
-    return (dev and Guild and Guild.SameAccount and Guild:SameAccount(key, dev)) and true or false
+    return (Guild and Guild.SameAccount and Guild:SameAccount(key, DEV_KEY)) and true or false
 end
 
 function Feedback:AmIDev()
@@ -153,7 +146,7 @@ function Feedback:AmIDev()
     -- another character of my account is the developer (the saved data is account wide)
     local db = ns.db
     for key in pairs(db and type(db.chars) == "table" and db.chars or {}) do
-        if type(key) == "string" and strmatch(key, "^([^%-]+)") == DEV_NAME then return true end
+        if Util.IsDevKey(key) then return true end
     end
     return false
 end
@@ -1618,7 +1611,7 @@ function Feedback:DemoStore()
     return demoStore
 end
 
--- Demo: "Tsumil has it" for an item I just sent, a moment later (as the developer's client would).
+-- Demo: "<developer> has it" for an item I just sent, a moment later (as the developer's client would).
 function Feedback:DemoNumber(id)
     if not (DemoOn() and demoStore and demoStore.r[id]) then return end
     demoStore.no = (demoStore.no or 18) + 1
