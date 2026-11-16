@@ -380,5 +380,54 @@ def professions_a_member_who_was_offline_still_gets_the_guilds_professions():
     no_errors(w)
 
 
+# ------------------------------------------------------------------------------------------------------------------
+# 5. Low priority: the developer's feedback plan
+# ------------------------------------------------------------------------------------------------------------------
+PLAN_FORGE = """local to, bump = ...
+local s = ns.DB:GuildBucket('feedbackPlan', false, ns.Util.GuildKey())
+local p = ns.EventBlocks.Copy(s.plan)
+p.rev = p.rev + bump
+for v, r in pairs(p.rel) do r.th = 'Officer Olaf decides now'; r.u = p.rev end
+ns.Comm:Send({ t = 'FBP', p = p }, 'WHISPER', to, 'fb')
+local c = ns.EventBlocks.Copy(s.coming)
+c.rev = c.rev + bump
+for _, r in ipairs(c.l) do r.th = 'Officer Olaf decides now' end
+ns.Comm:Send({ t = 'FBC', c = c }, 'GUILD', nil, 'fb')"""
+
+
+def _plan_theme(cl):
+    return cl.eval_py("local s = ns.DB:GuildBucket('feedbackPlan', false, ns.Util.GuildKey()); "
+                      "local p = s and s.plan; local c = s and s.coming; "
+                      "return { p = p and p.rel['1.9.1'] and p.rel['1.9.1'].th or false, "
+                      "c = c and c.l[1] and c.l[1].th or false }")
+
+
+def _set_release(dev, theme):
+    r = dev.eval_py("local ok, err = ns.FeedbackPlan:SetRelease('1.9.1', { th = ..., bg = 8, pub = true }); "
+                    "return { ok = ok and true or false, err = err or false }", theme)
+    assert r["ok"], r
+
+
+@case
+def plan_an_officer_cannot_rewrite_the_developers_plan():
+    w, c = fb_world()
+    dev, gina, olaf, alfa = c["Arakis"], c["Gina"], c["Olaf"], c["Alfa"]
+    _set_release(dev, "Quality of life")
+    w.tick(10, step=0.25)
+    assert _plan_theme(gina) == {"p": "Quality of life", "c": "Quality of life"}, _plan_theme(gina)
+    assert _plan_theme(alfa)["c"] == "Quality of life", _plan_theme(alfa)
+    # Olaf (an officer, who holds a copy) sends a newer plan to Gina and a newer Coming next to the guild
+    olaf.eval(PLAN_FORGE, fk("Gina"), 100)
+    w.tick(5, step=0.25)
+    assert _plan_theme(gina) == {"p": "Quality of life", "c": "Quality of life"}, _plan_theme(gina)
+    assert _plan_theme(alfa)["c"] == "Quality of life", _plan_theme(alfa)
+    # the developer's next change reaches everyone
+    _set_release(dev, "Raid night fixes")
+    w.tick(10, step=0.25)
+    assert _plan_theme(gina) == {"p": "Raid night fixes", "c": "Raid night fixes"}, _plan_theme(gina)
+    assert _plan_theme(alfa)["c"] == "Raid night fixes"
+    no_errors(w)
+
+
 if __name__ == "__main__":
     run_all()
