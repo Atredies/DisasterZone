@@ -37,6 +37,7 @@ local lockNotes = {}            -- [key] = GetServerTime(): a list that claims a
                                 -- one (soft marker: a warning, never excluded from suggestions)
 local lockSeenAt                -- GetServerTime() when this client learned the lock
 local confirmed = {}            -- [key] = { rev=, at= }: the owner's own push (direct L) of that rev arrived here
+local rejectNoted = {}          -- [key] = true: "couldn't take their list" was printed this session
 local LOCK_NOTE_WINDOW = 60     -- lists arriving this long after I learned the lock are late for a pre-lock commit
 local LOCK_GRACE = 3            -- lists committed up to this long after the lock started count as before it
                                 -- (BiS commits a pending edit as soon as the lock arrives)
@@ -412,6 +413,13 @@ function Store:Put(key, entry, via)
     local ok, err = Store:ValidateData(d)
     if not ok then
         ns:Debug("Rejected list for %s: %s", key, tostring(err))
+        -- Said once per player and session: a list this client can't read is mostly one from a newer version, and a
+        -- silent drop looked like "sync is broken".
+        if not rejectNoted[key] then
+            rejectNoted[key] = true
+            ns:Print("Couldn't take %s's BiS list (%s). If they run a newer DisasterZone than you (/dz version), "
+                .. "please update.", Util.ShortName(key), tostring(err))
+        end
         return false
     end
     local okHash, hash = pcall(Util.Hash, d)
