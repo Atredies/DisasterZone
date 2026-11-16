@@ -7,6 +7,20 @@ updated: 2026-11-16
 
 Newest first. Addon and tooling changes in this repo; the addon's own player-facing notes stay in its changelog.
 
+## 2026-11-16 - Developer key, credits, own update key, upgrade check
+
+- **Developer = Arakis-Thunderstrike** by name and realm (`Util.DEV_KEY`, `Util.IsDevKey`): the feedback inbox and
+  badge, staff replies, the Performance page, the boss-learning review and `/dz role`. Before, any character named
+  Tsumil on any realm counted. Feedback sent to the previous developer carries over.
+- **Credits:** Settings > About ("Created by Tsumil (tsumilo on GitHub). Maintained by Arakis since 1.6.0."), every
+  TOC's `## Author`. The in-game download link points at this repo's Releases.
+- **Own in-game update key** (`Core/PatchKey.lua`, root `9b1288d4`, 1024 one-time signatures). The original author's
+  update and bot keys are refused in game (`Patch.IsUntrustedKey`, `Core/Bridge.lua`) and by `release.py`; their
+  private halves are lost. Test: `tests/patch/test_untrusted_keys.py`.
+- **`dev/tools/upgrade_check.py`**: loads a real saved-variables file from an older release into this build and
+  compares every saved variable's entry counts before and after. On a real 1.5.5 file: nothing lost that 1.5.5 itself
+  keeps (one strategy assignment for a past raid is pruned by both).
+
 ## 2026-11-16 - Raid times in server or local time, busy calendar days in pages, other raiders' Bingo cards
 
 Brought over from the Forever port (its 0.2.6). One **Local / Server** switch (Settings > Window, and on the Home
