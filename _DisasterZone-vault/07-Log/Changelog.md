@@ -7,6 +7,42 @@ updated: 2026-11-16
 
 Newest first. Addon and tooling changes in this repo; the addon's own player-facing notes stay in its changelog.
 
+## 2026-11-16 - Fixes and features from the Forever port (security, sync, loot, recruitment)
+
+Brought over from the Forever port after checking each against 1.5.5 (the bug present in 1.5.5, or the feature
+working on TBC). Forever-only code left out. One commit per item on the PR.
+
+- **Security, relayed records:** the GM's rules travel on their own `GMR` record, taken only from the Guild Master;
+  a reserves list (`RVS`) only from the loot authority or its holder; relayed raid plans, sign-ups and team waitlists
+  only from their writer, a raid planner, the raid's leader or the Discord host (else held back and asked for); guest
+  book, officer notes and recruit records relayed by someone else are marked; LootReserve read only from the leader,
+  master looter or loot authority; raid blacklist and ledger awards keep who passed them on; role-gated records
+  (events, polls, prized items, strategies) only from someone who could have written them.
+- **Security, small holes:** feedback items, me-toos and replies only from their author or staff; the feedback plan
+  ("Coming next") only from the developer; a live event's chain vouches for nobody; dungeon runs only from their owner;
+  professions only from the member or an officer.
+- **Events and polls:** relays held back unless vouched, asked for from a role holder; a recheck (`XXR`) after a
+  catch-up so a login wave converges; the guild council list changes only from the GM's own copy.
+- **Data and loot:** duplicate drops (each copy uses up one reservation; two copies won by one player are two awards
+  in the loot log); event sign-ups survive a catch-up; an open roll comes back after /reload (`RQ`).
+- **Sync:** "couldn't take X's BiS list" said once per player per session; my version whispered back to a late
+  login (`V`); the roster lists anyone heard with DisasterZone.
+- **State-machine audit:** one raid-over cut-off; one sign-up path (a long Discord note is refused, not dropped);
+  invite & sort stops when its raid is cancelled or deleted; event handover keeps the host when the state can't go
+  out; the demo toggle cancels my open rolls; one award transition; the former reserves host writes only while no
+  authority is known.
+- **Raids, Discord, Chess:** a Discord answer to a locked raid is a request to join; the guild key takes the guild's
+  realm (connected realms); Chess results from the wire are concessions, a ladder draw only from one of the players,
+  ladder catch-up only from the one asked.
+- **Recruitment:** recruiters share messages and places, a message per place, text markers in channels (Say/Yell keep
+  the raid icons), whispers after a post land in Recruitment as Talking.
+- **`/dz update`** installs a downloaded update (the interface reloads) or asks the guild at once.
+- **Client safety:** every keyboard-propagation call goes through `Util.SetPropagateKeys` (skipped in combat, applied
+  after); no global `_` write.
+- New suites: `sync/test_authority*.py`, `sync/test_sync_notices.py`, `sync/test_connected_realms.py`,
+  `events/test_events_catchup.py`, `keybinds/test_combat_keys.py`, `raidplan/test_raidplan_signup_paths.py`.
+  Full run 304 suites, 0 failed.
+
 ## 2026-11-16 - The download link, easy to copy
 
 `/dz download` (and `/dz link`) print the download link and open a box with it selected (Ctrl+C, then paste it to
