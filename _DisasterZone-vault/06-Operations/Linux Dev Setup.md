@@ -50,6 +50,11 @@ Before the Linux fixes (same day) 5 suites failed, all upstream test bugs: the U
 path (`events/test_edge_tab`, `test_kinds_ui_qa`), two Azeromon suites depended on the time of day, and
 `sync/test_mixed_versions` needed the tag `release-1.4.0` with the addon source in it.
 
+## Run the dev build in the game
+
+`dev/install_tbc.sh --all` copies this checkout into the TBC Anniversary client (Wine install under
+`~/Games/battlenet`; `WOW_DIR` overrides it). Restart the game when a TOC changed, else `/reload`.
+
 ## Not in git
 
 - `dev/luaenv/` and `dev/.slots/` (recreate above)
