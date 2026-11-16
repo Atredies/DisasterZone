@@ -18,8 +18,7 @@ export DISASTERZONE_ADDON_DIR=$PWD/../addon/DisasterZone           # default is 
 export DZ_SLOT_DIR=$PWD/.slots
 luaenv/bin/python tools/test_harness_selftest.py                 # 13/13
 luaenv/bin/python tools/check.py -q
-luaenv/bin/python tf_e/run_all.py --all -j 8                    # ~5 min, forking on (the default)
-DZ_FORK=0 luaenv/bin/python tf_e/run_all.py patch/ --all -j 4   # the patch suites cannot fork
+tools/run_capped.sh --wait                                      # the full run, ~7 min (below)
 ```
 
 - Never set `DZ_NATIVE_CACHE` under `/tmp`: it can grow to several GB in one run.
@@ -29,6 +28,17 @@ DZ_FORK=0 luaenv/bin/python tf_e/run_all.py patch/ --all -j 4   # the patch suit
   forking off fills RAM and swap, and the system OOM killer (systemd-oomd) then kills the whole terminal. Run long
   test jobs in their own capped unit, so only the tests die if they run out:
   `systemd-run --user --unit=dz-tests --collect -p MemoryMax=16G -p MemorySwapMax=1G <script>`.
+
+## The full run: `dev/tools/run_capped.sh`
+
+Runs `tools/check.py` and every suite in three passes inside its own systemd unit (`dz-tests`, capped at 16 GB), so
+running out of memory kills only the tests: every area but `patch/` and `scale/` forked at `-j 8`, `patch/` with
+`DZ_FORK=0` (it cannot fork), `scale/` at `-j 2` (~5 GB per shard). Results: `tf_e/run_check.log`,
+`tf_e/run_main.log`, `run_patch.log`, `run_scale.log`. Watch with `systemctl --user status dz-tests`.
+
+`run_all.py`'s **first argument is the output folder**, the rest are path filters: `run_all.py patch/ --all` runs
+everything into `tf_e/patch/`; filter with `run_all.py myrun tests/patch/ --all`. It has no `--help` (an unknown
+first argument is just an output folder name, and the run starts).
 
 ## Baseline on 1.5.5
 
