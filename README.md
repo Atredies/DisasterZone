@@ -43,8 +43,9 @@
 
 1.6.0 is signed with new keys, so the old copies can't update to it by themselves. Install it by hand once:
 
-1. **Uninstall the old DisasterZone Launcher** (Windows: Settings > Apps). It follows the old release feed and would
-   put the old version back.
+1. Using the DisasterZone Launcher? Install **[Launcher 0.6.0](https://github.com/Atredies/DisasterZone/releases/tag/launcher-v0.6.0)**
+   over the old one (it keeps your settings). Don't keep the old launcher: it follows the old release feed and would
+   put the old version back. Then type `/launcher` once in the guild's Discord and paste the code in the launcher.
 2. Close the game, **delete every `DisasterZone*` folder** in `AddOns`, then install as above.
 
 Your raids, sign-ups, BiS lists, loot history and settings are kept: they live in your saved variables
@@ -60,8 +61,9 @@ A new zip is only needed when an update brings new art or new folders (the relea
 
 ## Discord
 
-Sign-ups and BiS lists from the guild's Discord are paused while the new bot is set up. The release notes will say
-when they're back.
+The guild's Discord bot (DisasterZoneTBC) takes raid sign-ups and BiS changes. They reach your game through the
+DisasterZone Launcher 0.6.0: link it once with `/launcher` in Discord. The launcher only does Discord sync; the addon
+itself comes from this page.
 
 <p align="center"><img src="assets/divider.png" width="70%" alt=""></p>
 
