@@ -650,24 +650,17 @@ end
 
 SYNC.clean, SYNC.merge, SYNC.state = CleanRecord, Merge, State
 
--- 2026-11-09 (authority holes, round 2): a relayed record (EVG) is taken at its writer's word (rec.by) only where
--- Merge needs no more than that the writer owns it. Where it needs a role of the writer (a review, the season, a
--- removal or cancel by a reviewer), the sender must be the writer or hold that role too (a reviewer's store holds only
--- such versions): a plain member can't pass on a made-up deletion "by" an officer. (Records a member writes for
--- themself still go by their word when relayed: see the Changelog's list.)
+-- 2026-11-09 (authority holes, rounds 2 and 3): a relayed record (EVG) names its writer (rec.by) in a field the sender
+-- controls. It is taken only from its writer (any of their characters) or from a reviewer (the GM, an officer, the
+-- guild council): every client takes relays only that way, so a reviewer's store holds only copies its writer or
+-- another reviewer passed on, and the reviewers answer a newcomer's sync first. Round 2 limited this to the records
+-- whose write needs a role; round 3 covers every kind: a member could otherwise put a calendar event or a library
+-- event "by" the GM on a client that never had it (it then spread by the normal sync), or a sign-up, result or title
+-- "by" anyone. Anyone else's copy is held back and asked for from its writer or a reviewer online (DigestSync Hold).
 SYNC.vouch = function(root, kind, rec, via)
-    if SamePlayer(via, rec.by) or Events:CanReview(via) then return true end
-    local cur = root[kind] and root[kind][rec.id]
-    if kind == "K" or kind == "C" then return false end
-    if kind == "D" then
-        return not (rec.del and cur and not cur.del and not SamePlayer(cur.by, rec.by))
-    elseif kind == "O" then
-        return not ((rec.del or rec.cancel) and cur and not cur.del and rec.by ~= (cur.h or cur.by))
-    elseif kind == "R" then
-        return not (rec.del and not (cur and cur.by == rec.by))
-    end
-    return true
+    return SamePlayer(via, rec.by) or Events:CanReview(via)
 end
+SYNC.relayer = function(key) return Events:CanReview(key) end   -- (who vouches for any record: DigestSync WantFrom)
 -- a review asked for "this revision": the one this commit makes
 SYNC.prepare = function(kind, rec)
     if kind == "D" and type(rec.review) == "table" and rec.review.rev == true then rec.review.rev = rec.rev end
@@ -1541,6 +1534,8 @@ end
 
 function Events:OnInit()
     sync:Register(OnUpdate, OnGive)
+    -- (relayed records nobody vouches for: held back and asked for, SYNC.vouch)
+    sync:EnableHold({ changed = function() Events.rankCache = nil; Changed() end })
     ns:On("DEMO_TOGGLED", function(on)
         if not on then demo = nil end
         Changed()

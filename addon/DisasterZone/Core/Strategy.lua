@@ -847,16 +847,23 @@ local function MergeRecord(root, kind, rec)
     return MergeFill(root, root.F[rec.id], rec)
 end
 
--- 2026-11-09 (authority holes, round 2): may `via` pass on this record (SBG)? Its writer (rec.by) is a field the
--- sender controls. An owner's own strategy goes by their word; a write that needs more (a collaborator's or a
--- moderator's edit or deletion, a raid's fills) is taken only from its writer, the strategy's owner, a moderator or
--- (fills) who may write that raid's fills: a plain member can't pass on a made-up deletion "by" the GM.
+-- 2026-11-09 (authority holes, rounds 2 and 3): may `via` pass on this record (SBG)? Its writer (rec.by) is a field
+-- the sender controls. A strategy is taken only from its writer, a moderator, a raid planner or the guild council (who
+-- answer a newcomer's sync first, CanWrite), or the owner of the strategy as I hold it; a raid's fills only from their
+-- writer or who may write that raid's fills. Every client takes relays only that way, so those stores hold only copies
+-- taken first-hand or from one another. (Round 2 still took an owner's own strategy at its word: a member could pass
+-- on a made-up strategy or edit "by" any owner.) Anyone else's copy is held back and asked for (DigestSync Hold).
 local function Vouched(kind, rec, via)
     if via == nil or Util.IsMe(via) or SamePlayer(via, rec.by) then return true end
     if kind == "F" then return (CanWriteRaid(rec.o, via)) end
-    if IsOwnerKey(rec, rec.by) then return true end
-    return CanModerate(via) or IsOwnerKey(rec, via)
+    if CanModerate(via) or CanWrite(via) then return true end
+    local root = Root(false)
+    local cur = root and root.B[rec.id]
+    return cur ~= nil and not cur.del and IsOwnerKey(cur, via)
 end
+sync.cfg.vouch = function(_, kind, rec, via) return Vouched(kind, rec, via) end
+-- (who vouches for any strategy, DigestSync WantFrom; a raid's fills need more, so their relays may still be held)
+sync.cfg.relayer = function(key) return CanModerate(key) or CanWrite(key) end
 
 -- via: who sent it (nil: a live edit, whose writer is its sender, or my own).
 local function StoreRecord(kind, r, via)
@@ -870,9 +877,12 @@ local function StoreRecord(kind, r, via)
     if not rec then return false end
     if not Vouched(kind, rec, via) then
         ns:Debug("Strategy: %s %s from %s refused (relayed, not vouched for)", kind, rec.id, via)
+        sync:Hold(kind, rec, via)
         return false
     end
-    return MergeRecord(root, kind, rec)
+    local ok = MergeRecord(root, kind, rec)
+    if ok and via ~= nil and sync.hold and next(sync.hold.items) then sync:ScheduleRetryHeld() end
+    return ok
 end
 
 ---------------------------------------------------------------------------
@@ -1781,6 +1791,9 @@ end
 function Strategy:OnInit()
     -- everyone builds strategies: a member's (and the digest of them) may be as large as a council member's
     sync:Register(OnUpdate, OnGive)
+    -- (relayed records nobody vouches for: held back and asked for, Vouched)
+    sync:EnableHold({ store = function(kind, rec, via) return StoreRecord(kind, rec, via) end, changed = Changed,
+        newer = Newer })
     -- The raid leaders / council lists decide which fills are shown: repaint when they change.
     ns:On("CONFIG_UPDATED", Changed)
 end

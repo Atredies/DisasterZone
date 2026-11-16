@@ -1506,6 +1506,23 @@ end
 -- (teams and series first: the items go one per message behind a throttle, and occurrences need their series)
 SYNC.giveSort = Merge.GiveBefore
 
+-- (DigestSync's recheck waits while relayed records or sign-ups are held back and a planner or their owner was asked
+-- for them: another member's copy would be held back the same way)
+SYNC.waiting = function()
+    if not next(Merge.pendingU) and not next(pending) then return false end
+    local root = Root(false)
+    if not root then return false end
+    for _, p in pairs(pending) do
+        local cur = type(p.rec) == "table" and root[p.kind] and root[p.kind][p.rec.id]
+        if type(p.rec) == "table" and (not cur or Newer(p.rec, cur)) then return true end
+    end
+    for _, p in pairs(Merge.pendingU) do
+        local cur = root.U[p.o] and root.U[p.o][p.k]
+        if not cur or Newer(p.s, cur) then return true end
+    end
+    return false
+end
+
 ---------------------------------------------------------------------------
 -- Public API: reading
 ---------------------------------------------------------------------------
