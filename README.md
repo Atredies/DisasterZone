@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="DisasterZone — BiS lists, Loot Council, Raids, Strategy boards" width="100%">
+  <img src="assets/banner.png" alt="DisasterZone - BiS lists, Loot Council, Raids, Strategy boards" width="100%">
 </p>
 
 <p align="center">
@@ -9,78 +9,81 @@
 
 <p align="center"><img src="assets/divider.png" width="70%" alt=""></p>
 
-<h2 align="center">Get the launcher</h2>
+<h2 align="center">Download</h2>
 
 <p align="center">
-  One click installs DisasterZone, keeps it up to date, and keeps backups you can go back to.
+  <a href="https://github.com/Atredies/DisasterZone/releases/latest"><img src="assets/btn-zip.png" width="280" alt="Download the addon zip"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/tsumilo/DisasterZone-releases/releases/latest"><img src="assets/btn-windows.png" width="240" alt="Download for Windows"></a>&nbsp;
-  <a href="https://github.com/tsumilo/DisasterZone-releases/releases/latest"><img src="assets/btn-macos.png" width="240" alt="Download for macOS"></a>&nbsp;
-  <a href="https://github.com/tsumilo/DisasterZone-releases/releases/latest"><img src="assets/btn-linux.png" width="240" alt="Download for Linux"></a>
+  Under <i>Assets</i>, click <b><code>DisasterZone-&lt;version&gt;.zip</code></b>. Don't use GitHub's green
+  "Code &gt; Download ZIP" button: that gives you the release files, not the addon.
 </p>
 
-<p align="center"><sub>
-  <b>Windows</b> may say <i>Windows protected your PC</i>: click <i>More info</i>, then <i>Run anyway</i>.
-  &nbsp;·&nbsp; <b>macOS</b>: the first time, right-click the app and choose <i>Open</i>.
-  &nbsp;·&nbsp; <b>Linux</b>: make the <code>.AppImage</code> executable, then run it.
-</sub></p>
+## Install
 
-<table align="center">
-  <tr>
-    <td align="center" width="25%"><b>Finds the game</b><br><sub>Windows, macOS, and Linux under Wine, Lutris, Bottles or Steam</sub></td>
-    <td align="center" width="25%"><b>Small updates</b><br><sub>Downloads only the files that changed, and checks every one</sub></td>
-    <td align="center" width="25%"><b>Safe to undo</b><br><sub>Backs up the addon and your saved variables before each update</sub></td>
-    <td align="center" width="25%"><b>Signed</b><br><sub>Only installs releases signed by the DisasterZone key</sub></td>
-  </tr>
-</table>
+1. **Close the game.**
+2. Open your WoW folder and go to `World of Warcraft\_anniversary_\Interface\AddOns`.
+3. Unzip the zip into `AddOns`. The folders must sit **directly** in `AddOns`:
+
+   ```
+   AddOns\
+     DisasterZone\               <- the addon (required)
+       DisasterZone.toc
+     DisasterZone_Rooms\         <- needed by Chess
+     DisasterZone_Bingo\  DisasterZone_Chess\  ...   <- the game packs
+   ```
+
+   If you end up with `AddOns\DisasterZone-1.6.0\DisasterZone\...` (an extra folder level), move the inner folders up
+   one level.
+4. **Start the game.** On the character screen, click **AddOns** and make sure DisasterZone is ticked.
+5. In game, type `/dz` to open it. `/dz version` shows which version you and your guildmates run.
+
+## Coming from 1.5.5 or older (once)
+
+1.6.0 is signed with new keys, so the old copies can't update to it by themselves. Install it by hand once:
+
+1. **Uninstall the old DisasterZone Launcher** (Windows: Settings > Apps). It follows the old release feed and would
+   put the old version back.
+2. Close the game, **delete every `DisasterZone*` folder** in `AddOns`, then install as above.
+
+Your raids, sign-ups, BiS lists, loot history and settings are kept: they live in your saved variables
+(`WTF\Account\...\SavedVariables\DisasterZone.lua`), not in these folders. Don't delete the `WTF` folder.
+
+## Updates
+
+**From 1.6.0 on, updates come in game.** When a guildmate who has a newer update is online, it downloads in the
+background and DisasterZone tells you. Type **`/dz update`** to install it (your interface reloads). Updates are
+signed: your copy only takes the ones signed with this project's key.
+
+A new zip is only needed when an update brings new art or new folders (the release notes say so).
+
+## Discord
+
+Sign-ups and BiS lists from the guild's Discord are paused while the new bot is set up. The release notes will say
+when they're back.
 
 <p align="center"><img src="assets/divider.png" width="70%" alt=""></p>
 
-<h2 align="center">Install by hand</h2>
+## Credits
 
-<p align="center">
-  <a href="https://github.com/tsumilo/DisasterZone-releases/releases"><img src="assets/btn-zip.png" width="280" alt="Download the addon zip"></a>
-</p>
+DisasterZone was created by **Tsumil** ([tsumilo](https://github.com/tsumilo)) for &lt;Casual Disaster&gt;, in
+[tsumilo/DisasterZone-dev](https://github.com/tsumilo/DisasterZone-dev) and
+[tsumilo/DisasterZone-releases](https://github.com/tsumilo/DisasterZone-releases), and handed over in November 2026.
+It is maintained here by **Arakis** since 1.6.0. Thank you, Tsumi.
 
-<p align="center">
-  Take <code>DisasterZone-&lt;version&gt;.zip</code> from the newest <b>DisasterZone</b> release and unzip it into<br>
-  <code>World of Warcraft\_anniversary_\Interface\AddOns</code>. It holds two folders, <code>DisasterZone</code> and <code>DisasterZone_Rooms</code>.<br>
-  <sub>Small fixes also arrive in game, from guildmates who already have them, no download needed.</sub>
-</p>
-
-<p align="center"><img src="assets/divider.png" width="70%" alt=""></p>
+The item data is generated from **AtlasLoot Classic** (GPL v2). Libraries, data sources and art credits are listed in
+`DisasterZone\NOTICE.md` inside the addon. World of Warcraft names, IDs and game art belong to Blizzard
+Entertainment.
 
 <details>
   <summary><b>What is in this repository</b></summary>
   <br>
 
-  - `channels/` — the signed release lists the launcher reads (`stable`, `beta`).
-  - `objects/` — the addon's files, one per version of each file, named by their SHA-256.
-  - `launcher/` — the launcher's source (Tauri: Rust + HTML); `.github/workflows/launcher.yml` builds it for every platform.
-  - Releases — each addon version as a zip, and each launcher version with its installers.
-</details>
-
-<details>
-  <summary><b>Code signing policy</b></summary>
-  <br>
-
-  Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
-  Applied for; until it is approved, launcher installers are unsigned.
-
-  - Only the launcher (`launcher/`) is signed. Its Windows installers are built by GitHub Actions from the source in this repository (`.github/workflows/launcher.yml`); nothing built on a personal computer is signed.
-  - Committers and reviewers: [tsumilo](https://github.com/tsumilo)
-  - Approvers: [tsumilo](https://github.com/tsumilo) — every signed release is approved by hand.
-</details>
-
-<details>
-  <summary><b>Privacy</b></summary>
-  <br>
-
-  The launcher collects no personal data and sends nothing about you or your computer anywhere.
-  It only connects to GitHub (`github.com`, `raw.githubusercontent.com`) to check for and download addon and launcher updates.
-  Its settings and backups stay on your computer.
+  - Branch `main` (this page): the release tree as it was at 1.5.5 (`channels/`, `objects/`, the launcher), kept
+    for history. Releases are on the [Releases page](https://github.com/Atredies/DisasterZone/releases).
+  - Branch `dev`: the addon's source, its test harness and tools; docs in `_DisasterZone-vault/`.
+  - Branch `upstream-1.6.0`: the original author's unreleased work after 1.5.5, kept for reference.
 </details>
 
 <details>
