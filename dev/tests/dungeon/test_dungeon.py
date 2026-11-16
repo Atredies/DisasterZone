@@ -727,6 +727,7 @@ def quality_threshold_rare_in_dungeon_only_when_active_epic_elsewhere():
         return (sorted(D[0]["i"]) if D else None), (sorted(mine[0]["i"]) if mine else None)
 
     RARE, EPIC = (COWL, 3), (RUBY_DRAPE, 4)
+    w.tick(10)         # (past the login traffic: the open-rolls ask RQ and the version whispers V share the channel)
     # 1. open world party, mode active: the raid threshold (epic) applies, the drop still goes on PARTY
     A.slash("/dz dungeon on")
     w.tick(1.5)

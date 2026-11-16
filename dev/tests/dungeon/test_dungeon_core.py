@@ -457,6 +457,7 @@ def party_without_dungeon_mode_keeps_todays_behaviour():
 def raid_is_unaffected_by_the_setting():
     r = Raid(sync=False)
     w = r.w
+    w.tick(10)         # (past the login traffic: the open-rolls ask RQ and the version whispers V share the channel)
     r["Bob"].slash("/dz dungeon on")
     w.tick(1)
     assert not r["Bob"].eval("return ns.Util.IsDungeonModeActive()")

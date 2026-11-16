@@ -146,6 +146,7 @@ def test_and_drops_and_drop():
     w2.tick(3)
     w2.make_raid([cou, rai])
     w2.tick(1)
+    w2.tick(10)        # (past the login traffic: HELLO, the open-rolls ask RQ, the version whispers V)
     n3 = len(cou.chat_frame)
     cou.slash("/dz drop")
     assert said(cou, n3) == ["DisasterZone: Usage: /dz drop [item link] [item link] ... (shift-click items into the command)"], said(cou, n3)
