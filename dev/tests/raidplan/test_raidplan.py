@@ -233,7 +233,10 @@ def late_login_catches_up_from_a_member_after_the_organizer_left():
     first = min(m["_time"] for m in claims)
     assert all(m["_time"] < first + w.latency for m in claims), claims   # the others saw the answer and stayed quiet
     rpw = [m for m in lr.msgs_of_type(w, "RPW", mark) if m["_sender"] == K("Uma")]
-    assert len(rpw) == 1, rpw
+    # 2026-11-09 (authority holes 2): Rita's sign-up, passed on by another member, isn't taken at their word either:
+    # Uma asks its owner (Rita, online) for it, one more RPW of just that occurrence (RaidPlan.lua Merge.HoldSignup)
+    owner_asks = [m for m in rpw if m["w"] == ["O:" + occ]]
+    assert len(owner_asks) <= 1 and len(rpw) - len(owner_asks) == 1, rpw
     h = [m for m in lr.msgs_of_type(w, "H", mark) if m["_sender"] == K("Uma")]
     assert h and isinstance(h[0]["pd"], str), h           # (a live sign-up may have reached Uma already)
     # the organizer comes back: their copies vouch for the raid and the team, and everyone agrees afterwards

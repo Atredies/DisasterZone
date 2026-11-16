@@ -1014,7 +1014,7 @@ end
 
 -- The refused versions again, after a change of the guild's roles (or of who shares an account).
 local function RetryPending()
-    local root = next(pending) and Root(false)
+    local root = (next(pending) or next(Merge.pendingU)) and Root(false)
     if not root then return end
     local list = pending
     pending = {}
@@ -1022,6 +1022,8 @@ local function RetryPending()
     for _, p in pairs(list) do
         if MergeRecord(root, p.kind, p.rec, p.via) then changed = true end
     end
+    -- (and the relayed sign-ups nobody vouched for yet)
+    if Merge.RetrySignups(root) then changed = true end
     if changed then Changed() end
 end
 
@@ -1075,10 +1077,14 @@ function Lineup.MergeWait(root, tid, ln, key, e)
     return true
 end
 
--- A team's waitlists as relayed (RPG w): { [lineup id] = { [player] = entry } }. Returns true when one changed.
-function Lineup.MergeAll(tid, w)
+-- A team's waitlists as relayed (RPG w) by `via`: { [lineup id] = { [player] = entry } }. Returns true when one
+-- changed. 2026-11-09 (authority holes, round 2): an entry is written by its player (joining, leaving) or the GM and
+-- the guild council (RTW); a relayed one is taken only from its player, the council or a raid planner (who hold only
+-- entries taken that way), else a planner's copy of the team is asked for.
+function Lineup.MergeAll(tid, w, via)
     local root = Root(true)
     if not root then return false end
+    local trusted = via == nil or Util.IsMe(via) or CanTeams(via) or CanAssignLeader(via)
     local now, changed, nl = Now(), false, 0
     for ln, list in pairs(w) do
         nl = nl + 1
@@ -1090,7 +1096,11 @@ function Lineup.MergeAll(tid, w)
                 if n > Lineup.MAX_STORED then break end
                 local k = WireKey(key)
                 local c = k and Lineup.CleanWait(e, now)
-                if c and Lineup.MergeWait(root, tid, ln, k, c) then changed = true end
+                if c and not (trusted or SamePlayer(via, k)) then
+                    AskPlanner("T:" .. tid, "w:" .. k .. ":" .. tostring(c.rev), via)
+                elseif c and Lineup.MergeWait(root, tid, ln, k, c) then
+                    changed = true
+                end
             end
         end
     end
@@ -1383,15 +1393,77 @@ local function OnHostSignups(sender, msg, dist)
     if changed then Changed() end
 end
 
+-- 2026-11-09 (authority holes, round 2): may a sign-up of `key` for occurrence occId, passed on by `via`, be believed?
+-- A sign-up is written by its owner only (RPS; another character of theirs, RPA; Discord answers, the Discord host,
+-- RPH). A copy passed on (RPG) can't prove who wrote it, so it is taken only from who could have sent it themselves or
+-- holds only copies taken that way: the owner (any character of theirs), a raid planner, the raid's own leader, the
+-- Discord host. Every client stores only such copies, so a planner's copy is as good as the owner's. Anyone else's
+-- copy waits (Merge.pendingU) while the planner or the owner online is asked for theirs (an owner also sends their
+-- answers at login): any member answers the login sync, and could otherwise slip in, change or withdraw anyone's
+-- answer on a client that missed the real one.
+Merge.pendingU = {}                 -- ["occId|key"] = { o, k, s, via }: relayed sign-ups not taken for now
+Merge.askedOwner = {}               -- ["occId|key"] = rev: the owner was asked about this answer
+
+function Merge.SignupVouched(root, occId, key, via)
+    if via == nil or Util.IsMe(via) or SamePlayer(via, key) or CanAssignLeader(via) then return true end
+    local G = Guild()
+    if G and G.IsDiscordHost and G:IsDiscordHost(via) then return true end
+    local v = ResolveOcc(root, occId)
+    return v ~= nil and v.rl ~= nil and SamePlayer(via, v.rl)
+end
+
+-- A relayed sign-up nobody vouched for: kept to try again when the guild's roles change, and asked for from a raid
+-- planner and the owner (whoever is online; once per answer).
+function Merge.HoldSignup(root, occId, key, s, via)
+    local cur = root.U[occId] and root.U[occId][key]
+    if cur and not Newer(s, cur) then return end
+    local pk = occId .. "|" .. key
+    local p = Merge.pendingU[pk]
+    if not p or Newer(s, p.s) then
+        if p or CountTable(Merge.pendingU) < MAX_PENDING * 3 then
+            Merge.pendingU[pk] = { o = occId, k = key, s = s, via = via }
+        end
+    end
+    AskPlanner("O:" .. occId, "u:" .. key .. ":" .. s.rev, via)
+    if Merge.askedOwner[pk] == s.rev then return end
+    Merge.askedOwner[pk] = s.rev
+    local G = Guild()
+    for _, m in ipairs(G and G.GetOnlineMembers and G:GetOnlineMembers() or {}) do
+        if m ~= via and not Util.IsMe(m) and SamePlayer(m, key) then
+            Send({ t = "RPW", w = { "O:" .. occId } }, "WHISPER", m, "ctrl")
+            return
+        end
+    end
+end
+
+-- The relayed sign-ups held back, again (the guild's roles changed: a planner may be known now). Returns true when
+-- one was taken.
+function Merge.RetrySignups(root)
+    if not next(Merge.pendingU) then return false end
+    local changed = false
+    for pk, p in pairs(Merge.pendingU) do
+        local cur = root.U[p.o] and root.U[p.o][p.k]
+        if cur and not Newer(p.s, cur) then
+            Merge.pendingU[pk] = nil
+        elseif Merge.SignupVouched(root, p.o, p.k, p.via) then
+            Merge.pendingU[pk] = nil
+            if MergeSignup(root, p.o, p.k, p.s) then changed = true end
+        end
+    end
+    return changed
+end
+
 -- RPG: one item (a team, a series, or an occurrence's override + sign-ups), relayed by anyone in the guild. The
 -- records go through the same checks as a live edit (MergeRecord); who relays them only counts for a raid's leader.
+-- Sign-ups and waitlist entries are taken only from who vouches for them (Merge.SignupVouched, Lineup.MergeAll).
 local function OnGive(sender, msg, dist)
     if dist ~= "WHISPER" then return end
     local changed = false
     if msg.T ~= nil then
         changed = StoreRecord("T", msg.T, sender)
-        -- (1.3.2) its waitlists: { [lineup id] = { [player] = entry } }, taken at their word like relayed sign-ups
-        if type(msg.w) == "table" and type(msg.T) == "table" and IsId(msg.T.id) and Lineup.MergeAll(msg.T.id, msg.w) then
+        -- (1.3.2) its waitlists: { [lineup id] = { [player] = entry } }, from who vouches for them (Lineup.MergeAll)
+        if type(msg.w) == "table" and type(msg.T) == "table" and IsId(msg.T.id)
+            and Lineup.MergeAll(msg.T.id, msg.w, sender) then
             changed = true
         end
     elseif msg.S ~= nil then
@@ -1411,7 +1483,13 @@ local function OnGive(sender, msg, dist)
                 if n > MAX_SIGNUPS then break end
                 local k = WireKey(key)
                 local c = k and CleanSignup(s, now)
-                if c and MergeSignup(root, msg.o, k, c) then changed = true end
+                if c then
+                    if not Merge.SignupVouched(root, msg.o, k, sender) then
+                        Merge.HoldSignup(root, msg.o, k, c, sender)
+                    elseif MergeSignup(root, msg.o, k, c) then
+                        changed = true
+                    end
+                end
             end
         end
     end
