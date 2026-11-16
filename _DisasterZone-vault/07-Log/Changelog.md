@@ -7,6 +7,14 @@ updated: 2026-11-16
 
 Newest first. Addon and tooling changes in this repo; the addon's own player-facing notes stay in its changelog.
 
+## 2026-11-16 - 1.6.0 released, launcher 0.6.0 published
+
+- `release-1.6.0` (Latest): version 1.6.0, What's New with credits to Tsumil, our Discord bot's key for
+  `Casual Disaster-Thunderstrike` (PR #9), release record `dev/releases/1.6.0.json` (PR #10).
+- `main`: member download page + launcher workflow (PR #11).
+- `launcher-v0.6.0` (not Latest): Windows installer from the workflow (signed updater, feed `launcher-latest`) and a
+  locally built Linux AppImage (no self-update yet: card `launcher-linux-self-update`).
+
 ## 2026-11-16 - Launcher 0.6.0 for TBC (from the 0.5.0 source)
 
 - `launcher/`: the 0.5.0 source members run (src-tauri, ui, proto, package files) replaces the older 0.4.0 copy; the

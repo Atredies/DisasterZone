@@ -5,6 +5,12 @@ updated: 2026-11-16
 
 # Project Overview
 
+**Now (2026-11-16):** **1.6.0 is released** (`release-1.6.0`, build `287919341db5591b`, the base for in-game
+updates) with the Forever fixes, the new update key and the guild's new Discord bot key; **launcher 0.6.0**
+(`launcher-v0.6.0`: Discord sync only, installs over 0.5.0, updates itself from this repo). The guild is moving to
+it; later fixes go out as signed in-game updates (`dev/tools/release.py patch`, then `/dz publish` from a release
+build).
+
 **What:** DisasterZone, the guild addon of <Casual Disaster> on TBC Anniversary: loot council, soft reserves, raid
 plans and sign-ups, attendance, BiS lists, roles, polls, recruitment, strategy boards, boss mods, Atlas and the
 guild games (Rooms, Bingo, Azeromon, Hold the Line, Chess, Illidan, Trainer). The repo also holds a Rust desktop

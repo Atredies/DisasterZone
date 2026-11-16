@@ -1,7 +1,8 @@
 ---
 title: "Bring the Forever fixes and features to TBC"
 tags: [task]
-status: 1 - In progress
+status: 5 - Done
+completed: 2026-11-16
 priority: p2
 effort: L
 updated: 2026-11-16
@@ -30,3 +31,5 @@ Each item is on `dev` (or marked "not for TBC" with why), the baseline is green,
 ## 2026-11-16
 
 Ported with the security, sync, loot and audit fixes (see the Changelog). Left: release them in 1.6.0.
+
+Released in **1.6.0** (`release-1.6.0`, 2026-11-16).
